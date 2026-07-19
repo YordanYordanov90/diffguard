@@ -4,7 +4,7 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Not started — specs complete, implementation not begun.
+- Phase 1 implementation — project scaffold complete; configuration is next.
 
 ## Current Goal
 
@@ -14,19 +14,43 @@ Update this file after every meaningful implementation change.
 ## Completed
 
 - Design interview complete; all seven context files written.
+- Feature 00 (GitHub App & environment setup) — mostly done 2026-07-19:
+  `diffguard-dev` GitHub App registered; Neon, Upstash QStash+Redis,
+  Clerk, and an LLM provider key all provisioned and stored in
+  `.env.local`. Remaining: scratch test repo + install and updating the
+  GitHub App's webhook URL to the deployed app once the webhook route exists.
+- Feature 01 (Project Scaffold) — completed 2026-07-19:
+  Next.js App Router scaffold with strict TypeScript, Tailwind v4 tokens,
+  shadcn/ui configuration, required runtime/tooling dependencies, pure-core
+  folder boundaries, Vitest configuration and smoke test. Local lint, tests,
+  and production build pass. Deployed to Vercel at
+  `https://diffguard-one.vercel.app` (deployment ready).
+- Feature 02 (Config & Env Validation) — completed 2026-07-19:
+  Zod environment schema, typed startup parser, centralized constants,
+  OpenAI/Anthropic provider resolution, safe configuration errors, and unit
+  tests for missing variables and provider keys. Local lint, tests, and
+  production build pass. Provider adapters are installed; runtime secrets
+  still need to be added to the Vercel project before server routes use them.
+- Feature 03 (Database Schema & Migration) — completed 2026-07-19:
+  Drizzle schema for installations, repositories, and reviews; Postgres
+  enums, tenant foreign keys, idempotency unique constraint, dashboard/daily
+  cap index, Neon serverless client, and generated migration. Migration
+  applied successfully to the configured Neon database. Local lint, tests,
+  and production build pass.
 
 ## In Progress
 
-- None yet.
+- Feature 04: query layer, next up.
 
 ## Next Up
 
-1. Scaffold Next.js app (App Router, TS strict, Tailwind, shadcn/ui,
-   Drizzle, env validation in `lib/config/`).
-2. Drizzle schema per `schemas.md` + first migration on Neon dev branch.
-3. Register `diffguard-dev` GitHub App (permissions: PR RW, Contents RO,
-   Metadata; events: pull_request, installation, installation_repositories);
-   store secrets in Vercel dev project.
+1. Typed Drizzle query layer with tenant isolation (Feature 04).
+3. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
+   PR RW, Contents RO, Metadata RO; events: pull_request, plus
+   installation/installation_repositories which are delivered
+   automatically). Private key generated and base64-encoded locally.
+   Still TODO: set webhook secret if not already set, store all app
+   secrets in the Vercel project's env vars once that project exists.
 4. Webhook route: HMAC verify → Zod validate → skip rules → rate limit →
    enqueue QStash job with debounce delay.
 5. Installation sync: handle installation / installation_repositories
@@ -38,16 +62,14 @@ Update this file after every meaningful implementation change.
 8. End-to-end verification on scratch repo via webhook redelivery.
 9. Minimal dashboard: Clerk GitHub OAuth, installations via
    `GET /user/installations`, reviews table + detail view, polling.
-10. Install prod app (`DiffGuard`) on owner's real repos; dogfood.
+10. Install the same `diffguard-dev` app on owner's real repos; dogfood.
 11. Invite 4–5 beta users.
 
 ## Open Questions
 
-- Exact cheap default model string at implementation time (Haiku 4.5 vs
-  GPT-5.4-mini — A/B on own repos in week 1).
-- Fallback GitHub App name if "DiffGuard" is taken at registration.
 - Concrete values: debounce seconds (60–90), daily cap, rate-limit window
-  — to be fixed as constants in `lib/config/`.
+  — chosen for Feature 02 as 75 seconds, 20 reviews/day, and 10 events/minute
+  per installation; revisit after dev verification.
 
 ## Architecture Decisions
 
@@ -81,8 +103,11 @@ Update this file after every meaningful implementation change.
 - Protection: per-installation webhook rate limit + hardcoded daily
   review cap → worst-case daily spend is a chosen constant.
 - Environments/testing: deploy-first (GitHub redelivery + Vercel logs);
-  two GitHub Apps, two Vercel projects, two Neon branches, separate
-  private keys; pure core unit-tested locally.
+  ONE GitHub App (`diffguard-dev`, created 2026-07-19), ONE Vercel
+  project, ONE Neon database — no separate prod app/env. Verify on the
+  scratch repo first, then install the same app on real repos when
+  ready; promote by updating env vars/secrets in place, not by
+  standing up a second app. Pure core unit-tested locally regardless.
 - Dashboard: minimal read-only, ships in Phase 1 as debug window; scope
   fence — only "did my PR go through and what happened".
 - `schemas.md` added as seventh context file; updated in the same
