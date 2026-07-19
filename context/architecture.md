@@ -12,7 +12,7 @@
 | Rate limit | Upstash Redis (@upstash/ratelimit)  | Per-installation webhook rate limiting        |
 | AI         | Vercel AI SDK (`generateObject`)    | Provider-agnostic structured review output    |
 | GitHub     | GitHub App (Octokit)                | Webhooks in; diffs + comments via API         |
-| Hosting    | Vercel                              | Single app, two projects/envs (dev, prod)     |
+| Hosting    | Vercel                              | Single app/project with one shared environment |
 
 ## System Boundaries
 
@@ -38,8 +38,10 @@
   structured findings metadata, and the rendered review markdown.
 - **Never stored**: diffs, file contents, or any repository source code.
   Diffs are fetched from GitHub, processed in memory, and discarded.
-- **Env secrets**: GitHub App private keys (base64 .pem, separate keys
-  per environment), webhook secrets, QStash keys, LLM API keys.
+- **Env secrets**: GitHub App private key (base64 .pem), webhook secret,
+  QStash keys, and LLM API keys stored in the Vercel project's environment;
+  promotion uses the same configured app and database rather than separate
+  dev/prod secret sets.
 
 ## Auth and Access Model
 
