@@ -42,9 +42,10 @@ Update this file after every meaningful implementation change.
   Typed Drizzle query functions for installation lifecycle, repository sync,
   idempotent review queueing, review state transitions, daily-cap counting,
   and tenant-scoped dashboard reads. Repository ownership is checked before
-  queue insertion, and all review queries filter by installation ID. Lint,
-  existing Vitest suite, and production build pass. A dedicated Neon test
-  branch or pglite fixture is still needed for database integration tests.
+  queue insertion, review claiming is atomic for queued/retryable states, and
+  all review queries filter by installation ID. Lint, existing Vitest suite,
+  and production build pass. A dedicated Neon test branch or pglite fixture
+  is still needed for database integration tests.
 - Feature 05 (Boundary Schemas) — completed 2026-07-21:
   Zod schemas for pull request, installation, and repository synchronization
   webhook payloads; the QStash review job; and the structured LLM review
@@ -54,9 +55,10 @@ Update this file after every meaningful implementation change.
 - Feature 06 (GitHub Client) — completed 2026-07-21:
   Typed GitHub App helpers for short-lived installation authentication, PR
   diff/head-SHA retrieval, `.aireview.md`/`AGENTS.md` instruction fallback
-  with size limiting, edit-in-place comment upsert, and authenticated user
-  installation access. Tokens and private keys remain in memory only and
-  are never logged or persisted. Fourteen Vitest tests, lint, and the
+  with size limiting, edit-in-place comment upsert, and paginated
+  authenticated user installation access. Unsupported oversized instruction
+  responses are ignored safely. Tokens and private keys remain in memory only
+  and are never logged or persisted. Fifteen Vitest tests, lint, and the
   production build pass; manual scratch-repo smoke testing remains for
   Feature 15 end-to-end verification.
 

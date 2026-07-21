@@ -6,7 +6,7 @@ import { parseEnv } from "../config/env";
 
 type InstallationOctokit = Awaited<ReturnType<App["getInstallationOctokit"]>>;
 type AppClient = Pick<App, "getInstallationOctokit">;
-type OAuthClient = Pick<Octokit, "request">;
+type OAuthClient = Pick<Octokit, "paginate">;
 
 export type GitHubClientDependencies = {
   app: AppClient;
@@ -15,9 +15,7 @@ export type GitHubClientDependencies = {
 
 export type InstallationClient = InstallationOctokit;
 
-const installationResponseSchema = z.object({
-  installations: z.array(z.object({ id: z.number().int().positive() })),
-});
+const installationSchema = z.object({ id: z.number().int().positive() });
 
 const fileResponseSchema = z.object({
   type: z.literal("file"),
@@ -59,6 +57,13 @@ function isNotFound(error: unknown) {
   return error instanceof RequestError && error.status === 404;
 }
 
+function isUnsupportedInstructionResponse(error: unknown) {
+  return (
+    error instanceof RequestError &&
+    [403, 413, 422].includes(error.status)
+  );
+}
+
 async function getInstallationClient(
   dependencies: GitHubClientDependencies,
   installationId: number,
@@ -83,9 +88,10 @@ async function fetchFile(
       ...(ref ? { ref } : {}),
       },
     );
-    return fileResponseSchema.parse(response.data);
+    const parsed = fileResponseSchema.safeParse(response.data);
+    return parsed.success ? parsed.data : null;
   } catch (error) {
-    if (isNotFound(error)) return null;
+    if (isNotFound(error) || isUnsupportedInstructionResponse(error)) return null;
     throw error;
   }
 }
@@ -175,10 +181,10 @@ export function createGitHubClient(
     },
 
     async getUserInstallations(userOauthToken: string) {
-      const response = await dependencies
+      const installations = await dependencies
         .createOAuthClient(userOauthToken)
-        .request("GET /user/installations", { per_page: 100 });
-      return installationResponseSchema.parse(response.data).installations.map(
+        .paginate("GET /user/installations", { per_page: 100 });
+      return z.array(installationSchema).parse(installations).map(
         (installation) => installation.id,
       );
     },

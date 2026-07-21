@@ -250,7 +250,13 @@ async function updateReviewStatus(
   const [review] = await database
     .update(reviews)
     .set({ status, updatedAt: new Date() })
-    .where(and(eq(reviews.id, reviewId), eq(reviews.installationId, installationId)))
+    .where(
+      and(
+        eq(reviews.id, reviewId),
+        eq(reviews.installationId, installationId),
+        inArray(reviews.status, ["queued", "failed"]),
+      ),
+    )
     .returning();
 
   return review ?? null;

@@ -8,16 +8,16 @@ import {
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
 
-function createMockClient() {
-  const request = vi.fn(
+function createMockClient(instructionResponse: unknown = {
+  type: "file",
+  encoding: "base64",
+  content: Buffer.from("review instructions").toString("base64"),
+}) {
+    const request = vi.fn(
     (route: string, params?: { headers?: { accept?: string } }) => {
     if (route.includes("/contents/")) {
       return Promise.resolve({
-        data: {
-          type: "file",
-          encoding: "base64",
-          content: Buffer.from("review instructions").toString("base64"),
-        },
+        data: instructionResponse,
       });
     }
     if (route.startsWith("POST")) return Promise.resolve({ data: { id: 501 } });
@@ -37,17 +37,22 @@ function createMockClient() {
   const oauthRequest = vi.fn().mockResolvedValue({
     data: { installations: [{ id: 42 }, { id: 84 }] },
   });
+  const oauthPaginate = vi.fn().mockResolvedValue([{ id: 42 }, { id: 84 }]);
   const dependencies = {
     app: {
       getInstallationOctokit: vi.fn().mockResolvedValue(installationClient),
     },
-    createOAuthClient: vi.fn().mockReturnValue({ request: oauthRequest }),
+    createOAuthClient: vi.fn().mockReturnValue({
+      paginate: oauthPaginate,
+      request: oauthRequest,
+    }),
   } as unknown as GitHubClientDependencies;
 
   return {
     client: createGitHubClient(dependencies),
     request,
     oauthRequest,
+    oauthPaginate,
   };
 }
 
@@ -72,6 +77,16 @@ describe("GitHub client", () => {
     );
   });
 
+  it("ignores unsupported oversized instruction responses", async () => {
+    const { client } = createMockClient({
+      type: "file",
+      encoding: "none",
+      content: "",
+    });
+
+    await expect(client.fetchInstructionsFile(42, "owner/repo", sha)).resolves.toBeNull();
+  });
+
   it("creates new comments and updates existing comments in place", async () => {
     const { client, request } = createMockClient();
 
@@ -88,9 +103,9 @@ describe("GitHub client", () => {
   });
 
   it("returns installation IDs from the authenticated user's GitHub access", async () => {
-    const { client, oauthRequest } = createMockClient();
+    const { client, oauthPaginate } = createMockClient();
 
     await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([42, 84]);
-    expect(oauthRequest).toHaveBeenCalledWith("GET /user/installations", { per_page: 100 });
+    expect(oauthPaginate).toHaveBeenCalledWith("GET /user/installations", { per_page: 100 });
   });
 });
