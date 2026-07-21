@@ -4,7 +4,8 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 1 implementation — project scaffold complete; configuration is next.
+- Phase 1 implementation — database foundation complete; webhook boundaries
+  are next.
 
 ## Current Goal
 
@@ -37,33 +38,55 @@ Update this file after every meaningful implementation change.
   cap index, Neon serverless client, and generated migration. Migration
   applied successfully to the configured Neon database. Local lint, tests,
   and production build pass.
+- Feature 04 (Query Layer) — completed 2026-07-21:
+  Typed Drizzle query functions for installation lifecycle, repository sync,
+  idempotent review queueing, review state transitions, daily-cap counting,
+  and tenant-scoped dashboard reads. Repository ownership is checked before
+  queue insertion, and all review queries filter by installation ID. Lint,
+  existing Vitest suite, and production build pass. A dedicated Neon test
+  branch or pglite fixture is still needed for database integration tests.
+- Feature 05 (Boundary Schemas) — completed 2026-07-21:
+  Zod schemas for pull request, installation, and repository synchronization
+  webhook payloads; the QStash review job; and the structured LLM review
+  output. Schemas strip unknown payload fields, validate 40-character
+  hexadecimal SHAs, enforce enum values, and export inferred TypeScript
+  types. Ten Vitest tests, lint, and the production build pass.
+- Feature 06 (GitHub Client) — completed 2026-07-21:
+  Typed GitHub App helpers for short-lived installation authentication, PR
+  diff/head-SHA retrieval, `.aireview.md`/`AGENTS.md` instruction fallback
+  with size limiting, edit-in-place comment upsert, and authenticated user
+  installation access. Tokens and private keys remain in memory only and
+  are never logged or persisted. Fourteen Vitest tests, lint, and the
+  production build pass; manual scratch-repo smoke testing remains for
+  Feature 15 end-to-end verification.
 
 ## In Progress
 
-- Feature 04: query layer, next up.
+- Feature 07: webhook route.
 
 ## Next Up
 
-1. Typed Drizzle query layer with tenant isolation (Feature 04).
-3. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
+1. Webhook route with HMAC verification, Zod validation, skip rules, rate
+   limiting, and debounced QStash enqueueing (Feature 07).
+2. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
    PR RW, Contents RO, Metadata RO; events: pull_request, plus
    installation/installation_repositories which are delivered
    automatically). Private key generated and base64-encoded locally.
    Still TODO: set webhook secret if not already set, store all app
    secrets in the Vercel project's env vars once that project exists.
-4. Webhook route: HMAC verify → Zod validate → skip rules → rate limit →
+3. Webhook route: HMAC verify → Zod validate → skip rules → rate limit →
    enqueue QStash job with debounce delay.
-5. Installation sync: handle installation / installation_repositories
+4. Installation sync: handle installation / installation_repositories
    events into DB.
-6. Worker route: QStash verify → idempotency + stale-SHA + daily-cap
+5. Worker route: QStash verify → idempotency + stale-SHA + daily-cap
    checks → diff fetch → pure core (filter/prioritize/prompt) →
    `generateObject` → render → comment upsert → persist.
-7. Vitest for pure core with captured webhook fixtures.
-8. End-to-end verification on scratch repo via webhook redelivery.
-9. Minimal dashboard: Clerk GitHub OAuth, installations via
+6. Vitest for pure core with captured webhook fixtures.
+7. End-to-end verification on scratch repo via webhook redelivery.
+8. Minimal dashboard: Clerk GitHub OAuth, installations via
    `GET /user/installations`, reviews table + detail view, polling.
-10. Install the same `diffguard-dev` app on owner's real repos; dogfood.
-11. Invite 4–5 beta users.
+9. Install the same `diffguard-dev` app on owner's real repos; dogfood.
+10. Invite 4–5 beta users.
 
 ## Open Questions
 
