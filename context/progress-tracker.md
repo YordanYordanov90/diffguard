@@ -61,15 +61,29 @@ Update this file after every meaningful implementation change.
   and are never logged or persisted. Fifteen Vitest tests, lint, and the
   production build pass; manual scratch-repo smoke testing remains for
   Feature 15 end-to-end verification.
+- Feature 07 (Webhook Route) — completed 2026-07-22:
+  Secure GitHub webhook front door with raw-body HMAC verification, timing-safe
+  signature comparison, event-specific Zod validation, dispatch stubs, unknown
+  event no-op handling, and the standard response envelope. Malformed signed
+  payloads return 400, invalid signatures return 401, and handler failures
+  return a retryable 500 without exposing raw errors. Twenty Vitest tests,
+  lint, and the production build pass.
+- Feature 08 (Installation Sync) — completed 2026-07-22:
+  Installation handlers now upsert created installations and repositories,
+  delete installations with cascade cleanup, update suspended state, and
+  synchronize added/removed repositories. The handlers are wired into the
+  webhook route while database imports remain deferred until after signature
+  and payload validation. Twenty-three Vitest tests, lint, and the production
+  build pass.
 
 ## In Progress
 
-- Feature 07: webhook route.
+- Feature 09: review trigger.
 
 ## Next Up
 
-1. Webhook route with HMAC verification, Zod validation, skip rules, rate
-   limiting, and debounced QStash enqueueing (Feature 07).
+1. Review trigger logic for skip rules, rate limiting, daily caps,
+   idempotent queueing, and debounced QStash publishing (Feature 09).
 2. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
    PR RW, Contents RO, Metadata RO; events: pull_request, plus
    installation/installation_repositories which are delivered
