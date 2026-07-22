@@ -13,6 +13,7 @@ import {
   handleInstallation,
   handleInstallationRepos,
 } from "@/lib/github/webhook-handlers";
+import { handlePullRequest } from "@/lib/github/review-trigger";
 
 export type WebhookHandlers = {
   handlePullRequest: (event: PullRequestEvent, deliveryId: string) => void | Promise<void>;
@@ -24,7 +25,9 @@ export type WebhookHandlers = {
 };
 
 const defaultHandlers: WebhookHandlers = {
-  handlePullRequest: async () => undefined,
+  handlePullRequest: async (event, deliveryId) => {
+    await handlePullRequest(event, deliveryId);
+  },
   handleInstallation,
   handleInstallationRepos,
 };
