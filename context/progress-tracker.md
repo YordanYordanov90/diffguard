@@ -87,14 +87,31 @@ Update this file after every meaningful implementation change.
   fills the configured approximate token budget atomically by file; and
   reports skipped files for disclosure. Focused tests cover exclusions,
   ranking, cutoff behavior, determinism, and new/deleted files.
+- Feature 11 (Prompt Builder) — completed 2026-07-22:
+  Pure prompt assembly now produces stable system and user messages with
+  security-first review rules, the ReviewOutput contract, line-number safety,
+  ordered PR context, skipped-file disclosure, and delimited untrusted
+  repository instructions. Tests cover snapshots, optional instructions,
+  delimiters, section order, and safety rules.
+- PR #22 Codex feedback fixes — completed 2026-07-22:
+  Draft reviews now requeue on `ready_for_review`, queued reviews can be
+  republished after transient QStash failures, daily-cap checks occur before
+  inserting eligible candidates, and root-level security-sensitive files are
+  ranked correctly.
+- Feature 12 (Comment Renderer) — completed 2026-07-22:
+  Pure markdown rendering now produces deterministic security-first review
+  comments with severity badges, line-aware locations, collapsible low/info
+  findings, skipped-file disclosure, zero-findings handling, and commit
+  footers. Snapshot tests cover full, empty, skipped-file, and file-level
+  finding cases.
 
 ## In Progress
 
-- Feature 11: prompt builder.
+- Feature 13: LLM call.
 
 ## Next Up
 
-1. Prompt assembly with delimited untrusted instructions (Feature 11).
+1. Structured LLM call with one retry and graceful failure (Feature 13).
 2. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
    PR RW, Contents RO, Metadata RO; events: pull_request, plus
    installation/installation_repositories which are delivered
