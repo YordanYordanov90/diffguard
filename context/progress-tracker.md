@@ -75,15 +75,26 @@ Update this file after every meaningful implementation change.
   webhook route while database imports remain deferred until after signature
   and payload validation. Twenty-three Vitest tests, lint, and the production
   build pass.
+- Feature 09 (Review Trigger) — completed 2026-07-22:
+  Pull request triggers now ignore unsupported actions, skip drafts/bot
+  authors/`[skip-review]`, suppress suspended or disabled repositories, apply
+  per-installation rate limits and daily caps, create idempotent queued
+  reviews, and publish delayed ReviewJob payloads to QStash. Thirty-two
+  Vitest tests, lint, and the production build pass.
+- Feature 10 (Diff Processing) — completed 2026-07-22:
+  Pure unified-diff parsing now filters lockfiles, generated assets, binaries,
+  images, and vendored dependencies; ranks security-sensitive paths first;
+  fills the configured approximate token budget atomically by file; and
+  reports skipped files for disclosure. Focused tests cover exclusions,
+  ranking, cutoff behavior, determinism, and new/deleted files.
 
 ## In Progress
 
-- Feature 09: review trigger.
+- Feature 11: prompt builder.
 
 ## Next Up
 
-1. Review trigger logic for skip rules, rate limiting, daily caps,
-   idempotent queueing, and debounced QStash publishing (Feature 09).
+1. Prompt assembly with delimited untrusted instructions (Feature 11).
 2. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
    PR RW, Contents RO, Metadata RO; events: pull_request, plus
    installation/installation_repositories which are delivered

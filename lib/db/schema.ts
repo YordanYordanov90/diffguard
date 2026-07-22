@@ -31,6 +31,8 @@ export const skipReasonEnum = pgEnum("skip_reason", [
   "stale_sha",
 ]);
 
+export type SkipReason = (typeof skipReasonEnum.enumValues)[number];
+
 export const verdictEnum = pgEnum("verdict", ["approve", "comment", "concerns"]);
 
 export const installations = pgTable("installations", {

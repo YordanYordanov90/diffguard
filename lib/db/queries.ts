@@ -1,7 +1,12 @@
 import { and, desc, eq, gte, inArray, lt, ne } from "drizzle-orm";
 
 import { db as defaultDb } from "./client";
-import { installations, repositories, reviews } from "./schema";
+import {
+  installations,
+  repositories,
+  reviews,
+  type SkipReason,
+} from "./schema";
 
 type Database = typeof defaultDb;
 
@@ -22,6 +27,17 @@ export type QueuedReviewInput = {
   repositoryId: number;
   prNumber: number;
   headSha: string;
+};
+
+export type ReviewTarget = {
+  suspended: boolean;
+  enabled: boolean;
+  repoFullName: string;
+};
+
+export type QueuedReviewResult = {
+  review: typeof reviews.$inferSelect | null;
+  created: boolean;
 };
 
 export type ReviewCompletion = {
@@ -149,20 +165,50 @@ export async function createQueuedReview(
     throw new Error("Repository is not registered for this installation.");
   }
 
-  await database
+  const [createdReview] = await database
     .insert(reviews)
     .values(input)
     .onConflictDoNothing({
       target: [reviews.repositoryId, reviews.prNumber, reviews.headSha],
-    });
+    })
+    .returning();
 
-  return getReviewBySha(
+  if (createdReview) {
+    return { review: createdReview, created: true };
+  }
+
+  const existingReview = await getReviewBySha(
     input.installationId,
     input.repositoryId,
     input.prNumber,
     input.headSha,
     database,
   );
+  return { review: existingReview, created: false };
+}
+
+export async function getReviewTarget(
+  installationId: number,
+  repositoryId: number,
+  database: Database = defaultDb,
+) {
+  const [target] = await database
+    .select({
+      suspended: installations.suspended,
+      enabled: repositories.enabled,
+      repoFullName: repositories.fullName,
+    })
+    .from(repositories)
+    .innerJoin(installations, eq(installations.id, repositories.installationId))
+    .where(
+      and(
+        eq(repositories.id, repositoryId),
+        eq(repositories.installationId, installationId),
+      ),
+    )
+    .limit(1);
+
+  return target ?? null;
 }
 
 export async function getReviewBySha(
@@ -229,13 +275,34 @@ export async function markReviewFailed(
 export async function markReviewSkipped(
   installationId: number,
   reviewId: string,
-  skipReason: "draft" | "bot_author" | "skip_keyword" | "daily_cap" | "rate_limited" | "stale_sha",
+  skipReason: SkipReason,
   database: Database = defaultDb,
 ) {
   const [review] = await database
     .update(reviews)
     .set({ status: "skipped", skipReason, updatedAt: new Date() })
     .where(and(eq(reviews.id, reviewId), eq(reviews.installationId, installationId)))
+    .returning();
+
+  return review ?? null;
+}
+
+export async function requeueReview(
+  installationId: number,
+  reviewId: string,
+  database: Database = defaultDb,
+) {
+  const [review] = await database
+    .update(reviews)
+    .set({ status: "queued", skipReason: null, error: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(reviews.id, reviewId),
+        eq(reviews.installationId, installationId),
+        eq(reviews.status, "skipped"),
+        eq(reviews.skipReason, "draft"),
+      ),
+    )
     .returning();
 
   return review ?? null;
