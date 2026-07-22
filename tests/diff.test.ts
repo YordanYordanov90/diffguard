@@ -27,11 +27,13 @@ describe("diff processing", () => {
       fileDiff("src/feature.ts"),
       fileDiff("tests/feature.test.ts"),
       fileDiff("api/auth.ts"),
+      fileDiff("middleware.ts"),
       fileDiff("config/runtime.ts"),
     ].join("\n");
 
     expect(processDiff(rawDiff).fileTree).toEqual([
       "api/auth.ts",
+      "middleware.ts",
       "config/runtime.ts",
       "src/feature.ts",
       "tests/feature.test.ts",

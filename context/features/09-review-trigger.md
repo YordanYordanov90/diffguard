@@ -14,7 +14,9 @@ Decide review / skip, record it, and enqueue the debounced job.
   repo disabled → no row at all.
 - Upstash sliding-window rate limit per installation → `rate_limited`.
 - Daily cap pre-check via countReviewsToday → `daily_cap`.
-- createQueuedReview (idempotent on the unique key; duplicate → exit).
+- createQueuedReview (idempotent on the unique key; existing queued reviews
+  may be republished for delivery recovery, while completed/failed reviews
+  exit as duplicates).
 - Publish ReviewJob to QStash with DEBOUNCE_SECONDS delay, target
   `/api/jobs/review`.
 

@@ -287,6 +287,27 @@ export async function markReviewSkipped(
   return review ?? null;
 }
 
+export async function requeueReview(
+  installationId: number,
+  reviewId: string,
+  database: Database = defaultDb,
+) {
+  const [review] = await database
+    .update(reviews)
+    .set({ status: "queued", skipReason: null, error: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(reviews.id, reviewId),
+        eq(reviews.installationId, installationId),
+        eq(reviews.status, "skipped"),
+        eq(reviews.skipReason, "draft"),
+      ),
+    )
+    .returning();
+
+  return review ?? null;
+}
+
 async function updateReviewStatus(
   installationId: number,
   reviewId: string,

@@ -33,6 +33,7 @@ function createDependencies(
       review: { id: "review-1" },
     }),
     markReviewSkipped: vi.fn().mockResolvedValue(null),
+    requeueReview: vi.fn().mockResolvedValue({ id: "review-1" }),
     countReviewsToday: vi.fn().mockResolvedValue(0),
     ...overrides,
   };
@@ -133,6 +134,63 @@ describe("review trigger", () => {
         deliveryId: "delivery-1",
       },
     });
+  });
+
+  it("requeues a draft review when the PR becomes ready", async () => {
+    const dependencies = createDependencies({
+      createQueuedReview: vi
+        .fn()
+        .mockResolvedValueOnce({ created: true, review: { id: "review-1" } })
+        .mockResolvedValueOnce({
+          created: false,
+          review: { id: "review-1", status: "skipped", skipReason: "draft" },
+        }),
+    });
+    const handler = createReviewTriggerHandler(dependencies);
+
+    await expect(
+      handler({ ...baseEvent, pull_request: { ...baseEvent.pull_request, draft: true } }, "delivery-1"),
+    ).resolves.toEqual({ status: "skipped", reason: "draft" });
+    await expect(
+      handler({ ...baseEvent, action: "ready_for_review" }, "delivery-2"),
+    ).resolves.toEqual({ status: "queued" });
+
+    expect(dependencies.queries.requeueReview).toHaveBeenCalledWith(42, "review-1");
+    expect(dependencies.qstash.publishJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("republishes an existing queued review after a publish failure", async () => {
+    const publishJSON = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary QStash failure"))
+      .mockResolvedValueOnce({ messageId: "message-2" });
+    const dependencies = createDependencies({
+      createQueuedReview: vi
+        .fn()
+        .mockResolvedValueOnce({ created: true, review: { id: "review-1" } })
+        .mockResolvedValueOnce({
+          created: false,
+          review: { id: "review-1", status: "queued", skipReason: null },
+        }),
+    });
+    dependencies.qstash = { publishJSON };
+    const handler = createReviewTriggerHandler(dependencies);
+
+    await expect(handler(baseEvent, "delivery-1")).rejects.toThrow("temporary QStash failure");
+    await expect(handler(baseEvent, "delivery-2")).resolves.toEqual({ status: "queued" });
+    expect(publishJSON).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows the review at the daily-cap boundary", async () => {
+    const dependencies = createDependencies({
+      countReviewsToday: vi.fn().mockResolvedValue(19),
+    });
+    const handler = createReviewTriggerHandler(dependencies);
+
+    await expect(handler(baseEvent, "delivery-1")).resolves.toEqual({ status: "queued" });
+    expect(dependencies.queries.countReviewsToday).toHaveBeenCalledBefore(
+      dependencies.queries.createQueuedReview,
+    );
   });
 
   it("exits without publishing when idempotency finds an existing review", async () => {

@@ -36,6 +36,7 @@ type ReviewQueries = {
     reviewId: string,
     skipReason: SkipReason,
   ) => Promise<unknown>;
+  requeueReview: (installationId: number, reviewId: string) => Promise<unknown>;
   countReviewsToday: (installationId: number) => Promise<number>;
 };
 
@@ -75,6 +76,10 @@ function createDefaultDependencies(): ReviewTriggerDependencies {
       async markReviewSkipped(installationId, reviewId, skipReason) {
         const { markReviewSkipped } = await import("@/lib/db/queries");
         return markReviewSkipped(installationId, reviewId, skipReason);
+      },
+      async requeueReview(installationId, reviewId) {
+        const { requeueReview } = await import("@/lib/db/queries");
+        return requeueReview(installationId, reviewId);
       },
       async countReviewsToday(installationId) {
         const { countReviewsToday } = await import("@/lib/db/queries");
@@ -127,11 +132,10 @@ export function createReviewTriggerHandler(
       headSha: event.pull_request.head.sha,
       deliveryId,
     };
-    const queued = await dependencies.queries.createQueuedReview(job);
-    if (!queued.created || !queued.review) return { status: "duplicate" };
-
     const skipReason = getSkipReason(event);
     if (skipReason) {
+      const queued = await dependencies.queries.createQueuedReview(job);
+      if (!queued.created || !queued.review) return { status: "duplicate" };
       await dependencies.queries.markReviewSkipped(
         installationId,
         queued.review.id,
@@ -142,6 +146,8 @@ export function createReviewTriggerHandler(
 
     const rateLimit = await dependencies.rateLimiter.limit(`installation:${installationId}`);
     if (!rateLimit.success) {
+      const queued = await dependencies.queries.createQueuedReview(job);
+      if (!queued.created || !queued.review) return { status: "duplicate" };
       await dependencies.queries.markReviewSkipped(
         installationId,
         queued.review.id,
@@ -152,12 +158,33 @@ export function createReviewTriggerHandler(
 
     const reviewsToday = await dependencies.queries.countReviewsToday(installationId);
     if (reviewsToday >= DAILY_REVIEW_CAP) {
+      const queued = await dependencies.queries.createQueuedReview(job);
+      if (!queued.created || !queued.review) return { status: "duplicate" };
       await dependencies.queries.markReviewSkipped(
         installationId,
         queued.review.id,
         "daily_cap",
       );
       return { status: "skipped", reason: "daily_cap" };
+    }
+
+    const queued = await dependencies.queries.createQueuedReview(job);
+    if (!queued.review) return { status: "duplicate" };
+
+    if (!queued.created) {
+      if (
+        event.action === "ready_for_review" &&
+        queued.review.status === "skipped" &&
+        queued.review.skipReason === "draft"
+      ) {
+        const requeued = await dependencies.queries.requeueReview(
+          installationId,
+          queued.review.id,
+        );
+        if (!requeued) return { status: "duplicate" };
+      } else if (queued.review.status !== "queued") {
+        return { status: "duplicate" };
+      }
     }
 
     await dependencies.qstash.publishJSON({

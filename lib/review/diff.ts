@@ -88,7 +88,16 @@ function isExcluded(file: DiffFile): boolean {
 function riskRank(file: DiffFile): number {
   const path = file.path.toLowerCase();
   const segments = path.split("/");
-  if (RISK_SEGMENTS.some((segment) => segments.includes(segment) || path.includes(`/${segment}.`))) return 0;
+  const basename = segments.at(-1) ?? "";
+  const basenameWithoutExtension = basename.split(".")[0];
+  if (
+    RISK_SEGMENTS.some(
+      (segment) =>
+        segments.includes(segment) ||
+        path.includes(`/${segment}.`) ||
+        basenameWithoutExtension === segment,
+    )
+  ) return 0;
   if (TEST_SEGMENTS.some((segment) => segments.includes(segment))) return 2;
   const extension = segments.at(-1)?.split(".").at(-1) ?? "";
   if (DOC_EXTENSIONS.has(extension)) return 3;
