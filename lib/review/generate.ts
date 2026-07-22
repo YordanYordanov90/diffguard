@@ -47,11 +47,17 @@ export type GeneratedReview = {
 
 export class ReviewFailedError extends Error {
   readonly cause: unknown;
+  readonly retryable: boolean;
 
-  constructor(message = "The review could not be generated.", cause?: unknown) {
+  constructor(
+    message = "The review could not be generated.",
+    cause?: unknown,
+    retryable = true,
+  ) {
     super(message);
     this.name = "ReviewFailedError";
     this.cause = cause;
+    this.retryable = retryable;
   }
 }
 
@@ -98,8 +104,9 @@ function errorFeedback(error: unknown): string {
 async function withTimeout<T>(
   operation: Promise<T>,
   controller: AbortController,
-  timeoutMs: number,
+  deadline: number,
 ): Promise<T> {
+  const timeoutMs = Math.max(0, deadline - Date.now());
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -124,6 +131,7 @@ export async function generateReview(
   const generate = options.generateObjectFn ?? (generateObject as GenerateObjectFunction);
   const controller = new AbortController();
   const startedAt = Date.now();
+  const deadline = startedAt + (options.timeoutMs ?? LLM_TIMEOUT_MS);
   const usage: Usage = { inputTokens: null, outputTokens: null };
   let userPrompt = prompt.user;
 
@@ -140,7 +148,7 @@ export async function generateReview(
             maxRetries: 0,
           }),
           controller,
-          options.timeoutMs ?? LLM_TIMEOUT_MS,
+          deadline,
         );
         addUsage(usage, result);
 
@@ -156,7 +164,7 @@ export async function generateReview(
           continue;
         }
 
-        throw new ReviewFailedError(undefined, error);
+        throw new ReviewFailedError(undefined, error, attempt > 0 ? false : true);
       }
     }
   } catch (error) {

@@ -146,6 +146,8 @@ ReviewJob = {
   repositoryId:   number
   repoFullName:   string
   prNumber:       number
+  prTitle:        string
+  prBody:         string | null
   headSha:        string   // worker exits early if no longer PR head
   deliveryId:     string   // GitHub X-GitHub-Delivery, for tracing
 }

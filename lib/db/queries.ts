@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, lt, ne } from "drizzle-orm";
 
 import { db as defaultDb } from "./client";
 import {
@@ -167,7 +167,12 @@ export async function createQueuedReview(
 
   const [createdReview] = await database
     .insert(reviews)
-    .values(input)
+    .values({
+      installationId: input.installationId,
+      repositoryId: input.repositoryId,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+    })
     .onConflictDoNothing({
       target: [reviews.repositoryId, reviews.prNumber, reviews.headSha],
     })
@@ -245,6 +250,30 @@ export async function getReviewBySha(
     .limit(1);
 
   return review ?? null;
+}
+
+export async function getLatestReviewCommentId(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  database: Database = defaultDb,
+) {
+  const [review] = await database
+    .select({ commentId: reviews.commentId })
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.installationId, installationId),
+        eq(reviews.repositoryId, repositoryId),
+        eq(reviews.prNumber, prNumber),
+        eq(reviews.status, "completed"),
+        isNotNull(reviews.commentId),
+      ),
+    )
+    .orderBy(desc(reviews.updatedAt))
+    .limit(1);
+
+  return review?.commentId ?? null;
 }
 
 export async function markReviewRunning(

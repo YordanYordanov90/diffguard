@@ -29,7 +29,8 @@ Return output matching the ReviewOutput schema exactly:
 Do not invent files, code, line numbers, or behavior that is not supported by the supplied context.`;
 
 function section(name: string, value: string): string {
-  return `<untrusted-${name}>\n${value}\n</untrusted-${name}>`;
+  const escapedValue = value.replaceAll("<", "\\u003c");
+  return `<untrusted-${name}>\n${escapedValue}\n</untrusted-${name}>`;
 }
 
 function formatFileTree(fileTree: string[]): string {

@@ -5,6 +5,7 @@ import { parseEnv } from "@/lib/config/env";
 import type {
   countReviewsToday,
   getInstallationModel,
+  getLatestReviewCommentId,
   getReviewBySha,
   markReviewCompleted,
   markReviewFailed,
@@ -31,6 +32,7 @@ type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 type ReviewQueries = {
   getReviewBySha: (...args: Parameters<typeof getReviewBySha>) => Promise<StoredReview>;
   getInstallationModel: (...args: Parameters<typeof getInstallationModel>) => Promise<string | null>;
+  getLatestReviewCommentId: (...args: Parameters<typeof getLatestReviewCommentId>) => Promise<number | null>;
   countReviewsToday: (...args: Parameters<typeof countReviewsToday>) => Promise<number>;
   markReviewSkipped: (...args: Parameters<typeof markReviewSkipped>) => Promise<unknown>;
   markReviewRunning: (...args: Parameters<typeof markReviewRunning>) => Promise<StoredReview>;
@@ -77,6 +79,10 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       async getInstallationModel(...args) {
         const { getInstallationModel } = await import("@/lib/db/queries");
         return getInstallationModel(...args);
+      },
+      async getLatestReviewCommentId(...args) {
+        const { getLatestReviewCommentId } = await import("@/lib/db/queries");
+        return getLatestReviewCommentId(...args);
       },
       async countReviewsToday(...args) {
         const { countReviewsToday } = await import("@/lib/db/queries");
@@ -149,7 +155,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
   }
 
   const reviewsToday = await dependencies.queries.countReviewsToday(job.installationId);
-  if (reviewsToday >= DAILY_REVIEW_CAP) {
+  if (reviewsToday > DAILY_REVIEW_CAP) {
     await dependencies.queries.markReviewSkipped(job.installationId, review.id, "daily_cap");
     return { status: "daily_cap" as const };
   }
@@ -174,8 +180,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
 
     const processedDiff = processDiff(rawDiff);
     const prompt = buildReviewPrompt({
-      prTitle: `Pull request #${job.prNumber}`,
-      prBody: null,
+      prTitle: job.prTitle,
+      prBody: job.prBody,
       fileTree: processedDiff.fileTree,
       diff: processedDiff.diff,
       instructions,
@@ -187,11 +193,16 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       skippedFiles: processedDiff.skippedFiles,
       headSha: job.headSha,
     });
+    const previousCommentId = review.commentId ?? (await dependencies.queries.getLatestReviewCommentId(
+      job.installationId,
+      job.repositoryId,
+      job.prNumber,
+    ));
     const commentId = await dependencies.github.upsertComment(
       job.installationId,
       job.repoFullName,
       job.prNumber,
-      review.commentId,
+      previousCommentId,
       markdown,
     );
 
@@ -246,7 +257,10 @@ export async function handleReviewWorker(
   try {
     const result = await runReview(job, dependencies);
     return envelope(true, result, null, 200);
-  } catch {
+  } catch (error) {
+    if (error instanceof ReviewFailedError && !error.retryable) {
+      return envelope(true, { status: "failed" }, null, 200);
+    }
     return envelope(false, null, "Review processing failed.", 500);
   }
 }

@@ -78,6 +78,8 @@ describe("review boundary schemas", () => {
         repositoryId: 100,
         repoFullName: "owner/repo",
         prNumber: 7,
+        prTitle: "Update dependency",
+        prBody: "Please review this change.",
         headSha: sha,
         deliveryId: "delivery-1",
       }),

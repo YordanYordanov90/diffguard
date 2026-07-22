@@ -4,6 +4,7 @@ import {
   handleReviewWorker,
   type ReviewWorkerDependencies,
 } from "@/app/api/jobs/review/route";
+import { ReviewFailedError } from "@/lib/review/generate";
 
 const headSha = "0123456789abcdef0123456789abcdef01234567";
 const job = {
@@ -11,6 +12,8 @@ const job = {
   repositoryId: 100,
   repoFullName: "owner/repo",
   prNumber: 7,
+  prTitle: "Add feature",
+  prBody: "Please preserve the existing behavior.",
   headSha,
   deliveryId: "delivery-1",
 };
@@ -28,6 +31,7 @@ function createDependencies(
         commentId: null,
       }),
       getInstallationModel: vi.fn().mockResolvedValue("openai/test"),
+      getLatestReviewCommentId: vi.fn().mockResolvedValue(null),
       countReviewsToday: vi.fn().mockResolvedValue(0),
       markReviewSkipped: vi.fn().mockResolvedValue(null),
       markReviewRunning: vi.fn().mockResolvedValue({ id: "review-1" }),
@@ -97,7 +101,7 @@ describe("review worker route", () => {
     ["daily_cap", {}],
   ])("takes the %s early exit", async (reason, githubOverrides) => {
     const dependencies = createDependencies(
-      reason === "daily_cap" ? { countReviewsToday: vi.fn().mockResolvedValue(20) } : {},
+      reason === "daily_cap" ? { countReviewsToday: vi.fn().mockResolvedValue(21) } : {},
       githubOverrides,
     );
     const response = await handleReviewWorker(request(), dependencies);
@@ -126,9 +130,42 @@ describe("review worker route", () => {
     expect(dependencies.queries.markReviewRunning).toHaveBeenCalledBefore(
       dependencies.github.fetchPrDiff,
     );
+    expect(dependencies.generateReview).toHaveBeenCalledWith(
+      expect.objectContaining({ user: expect.stringContaining("Add feature") }),
+      { model: "openai/test" },
+    );
     expect(dependencies.github.upsertComment).toHaveBeenCalledBefore(
       dependencies.queries.markReviewCompleted,
     );
+  });
+
+  it("reuses the latest completed review comment for a new head SHA", async () => {
+    const dependencies = createDependencies({
+      getLatestReviewCommentId: vi.fn().mockResolvedValue(812),
+    });
+
+    await handleReviewWorker(request(), dependencies);
+
+    expect(dependencies.github.upsertComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      812,
+      expect.any(String),
+    );
+  });
+
+  it("acknowledges terminal LLM validation failure without QStash retry", async () => {
+    const dependencies = createDependencies();
+    dependencies.generateReview = vi.fn().mockRejectedValue(
+      new ReviewFailedError("The review could not be generated.", undefined, false),
+    );
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.queries.markReviewFailed).toHaveBeenCalled();
+    expect(dependencies.github.upsertComment).not.toHaveBeenCalled();
   });
 
   it("marks failures and returns a retryable response without posting", async () => {

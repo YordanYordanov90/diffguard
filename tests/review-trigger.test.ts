@@ -130,6 +130,8 @@ describe("review trigger", () => {
         repositoryId: 100,
         repoFullName: "owner/repo",
         prNumber: 7,
+        prTitle: "Add feature",
+        prBody: null,
         headSha: baseEvent.pull_request.head.sha,
         deliveryId: "delivery-1",
       },
