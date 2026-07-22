@@ -211,6 +211,19 @@ export async function getReviewTarget(
   return target ?? null;
 }
 
+export async function getInstallationModel(
+  installationId: number,
+  database: Database = defaultDb,
+) {
+  const [installation] = await database
+    .select({ model: installations.model })
+    .from(installations)
+    .where(eq(installations.id, installationId))
+    .limit(1);
+
+  return installation?.model ?? null;
+}
+
 export async function getReviewBySha(
   installationId: number,
   repositoryId: number,

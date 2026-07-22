@@ -104,15 +104,26 @@ Update this file after every meaningful implementation change.
   findings, skipped-file disclosure, zero-findings handling, and commit
   footers. Snapshot tests cover full, empty, skipped-file, and file-level
   finding cases.
+- Feature 13 (LLM Call) — completed 2026-07-22:
+  Provider-agnostic structured generation now resolves the installation model,
+  validates against `ReviewOutput`, enforces a shared abort timeout, retries
+  one parse/schema failure with bounded validation feedback, aggregates token
+  usage, and throws `ReviewFailedError` after graceful failure. Tests cover
+  success, retry, double failure, and timeout abort behavior; tests, lint, and
+  production build pass.
+- Feature 14 (Worker Route) — completed 2026-07-22:
+  QStash verification, job validation, idempotent/stale-SHA/daily-cap exits,
+  review pipeline orchestration, comment persistence, and retryable failure
+  handling are implemented with mocked orchestration tests. Fifty-six Vitest
+  tests, lint, and the production build pass.
 
 ## In Progress
 
-- Feature 13: LLM call.
+- None.
 
 ## Next Up
 
-1. Structured LLM call with one retry and graceful failure (Feature 13).
-2. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
+1. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
    PR RW, Contents RO, Metadata RO; events: pull_request, plus
    installation/installation_repositories which are delivered
    automatically). Private key generated and base64-encoded locally.
@@ -122,15 +133,12 @@ Update this file after every meaningful implementation change.
    enqueue QStash job with debounce delay.
 4. Installation sync: handle installation / installation_repositories
    events into DB.
-5. Worker route: QStash verify → idempotency + stale-SHA + daily-cap
-   checks → diff fetch → pure core (filter/prioritize/prompt) →
-   `generateObject` → render → comment upsert → persist.
-6. Vitest for pure core with captured webhook fixtures.
-7. End-to-end verification on scratch repo via webhook redelivery.
-8. Minimal dashboard: Clerk GitHub OAuth, installations via
+5. Vitest for pure core with captured webhook fixtures.
+6. End-to-end verification on scratch repo via webhook redelivery.
+7. Minimal dashboard: Clerk GitHub OAuth, installations via
    `GET /user/installations`, reviews table + detail view, polling.
-9. Install the same `diffguard-dev` app on owner's real repos; dogfood.
-10. Invite 4–5 beta users.
+8. Install the same `diffguard-dev` app on owner's real repos; dogfood.
+9. Invite 4–5 beta users.
 
 ## Open Questions
 
