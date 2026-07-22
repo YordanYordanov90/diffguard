@@ -7,6 +7,8 @@ export const reviewJobSchema = z.object({
   repositoryId: z.number().int().positive(),
   repoFullName: z.string().min(1),
   prNumber: z.number().int().positive(),
+  prTitle: z.string(),
+  prBody: z.string().nullable(),
   headSha: shaSchema,
   deliveryId: z.string().min(1),
 });

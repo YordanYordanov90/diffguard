@@ -129,6 +129,8 @@ export function createReviewTriggerHandler(
       repositoryId: event.repository.id,
       repoFullName: target.repoFullName,
       prNumber: event.pull_request.number,
+      prTitle: event.pull_request.title,
+      prBody: event.pull_request.body,
       headSha: event.pull_request.head.sha,
       deliveryId,
     };
