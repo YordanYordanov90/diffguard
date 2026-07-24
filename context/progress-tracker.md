@@ -116,10 +116,18 @@ Update this file after every meaningful implementation change.
   review pipeline orchestration, comment persistence, and retryable failure
   handling are implemented with mocked orchestration tests. Fifty-six Vitest
   tests, lint, and the production build pass.
+- PR #23 review feedback — fixes completed 2026-07-22:
+  prompt delimiter escaping, cross-SHA comment reuse, terminal LLM failure
+  acknowledgement, daily-cap boundary, PR metadata propagation, and one
+  shared LLM timeout deadline are covered by code and tests.
 
 ## In Progress
 
-- None.
+- Feature 15: End-to-end dev verification — blocked on external setup.
+  PR #23 is merged, Vercel env configuration is now loaded, and tampered
+  webhook/worker requests correctly return 401. `diffguard-dev` is installed
+  on `YordanYordanov90/weather-app` only; the remaining work is the PR-flow
+  verification checklist.
 
 ## Next Up
 

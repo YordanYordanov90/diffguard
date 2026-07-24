@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createReviewTriggerHandler,
+  getReviewWorkerUrl,
   type ReviewTriggerDependencies,
 } from "@/lib/github/review-trigger";
 
@@ -47,6 +48,19 @@ function createDependencies(
 }
 
 describe("review trigger", () => {
+  it("uses the stable production URL for QStash worker deliveries", () => {
+    expect(getReviewWorkerUrl({
+      VERCEL_PROJECT_PRODUCTION_URL: "diffguard-one.vercel.app",
+      VERCEL_URL: "diffguard-fxisad7pg-yordan-yordanovs-projects.vercel.app",
+    })).toBe("https://diffguard-one.vercel.app/api/jobs/review");
+  });
+
+  it("falls back to the deployment URL outside Vercel production", () => {
+    expect(getReviewWorkerUrl({ VERCEL_URL: "diffguard-preview.vercel.app" })).toBe(
+      "https://diffguard-preview.vercel.app/api/jobs/review",
+    );
+  });
+
   it("ignores actions outside the review trigger set", async () => {
     const dependencies = createDependencies();
     const handler = createReviewTriggerHandler(dependencies);
