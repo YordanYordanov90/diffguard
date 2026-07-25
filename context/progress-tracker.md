@@ -120,14 +120,23 @@ Update this file after every meaningful implementation change.
   prompt delimiter escaping, cross-SHA comment reuse, terminal LLM failure
   acknowledgement, daily-cap boundary, PR metadata propagation, and one
   shared LLM timeout deadline are covered by code and tests.
+- Feature 15 (End-to-end dev verification) — completed 2026-07-25:
+  `diffguard-dev` was verified on the isolated `YordanYordanov90/weather-app`
+  repository. GitHub webhook delivery, installation synchronization, QStash
+  debounce, signed worker processing, database completion, security finding
+  detection, and the final PR comment all passed. A second push reused the
+  same GitHub comment ID, confirming edit-in-place behavior.
+- Feature 16 (Dashboard auth & access resolution) — completed 2026-07-25:
+  Clerk is linked to the DiffGuard app with GitHub OAuth sign-in routes,
+  protected dashboard middleware/layout, shadcn-themed provider controls, and
+  a five-minute Upstash cache for GitHub-derived installation access. Access
+  resolution returns an empty set when no GitHub OAuth token is available and
+  never trusts installation IDs from client input. Focused auth tests, lint,
+  full Vitest suite, Clerk Doctor, and production build pass.
 
 ## In Progress
 
-- Feature 15: End-to-end dev verification — blocked on external setup.
-  PR #23 is merged, Vercel env configuration is now loaded, and tampered
-  webhook/worker requests correctly return 401. `diffguard-dev` is installed
-  on `YordanYordanov90/weather-app` only; the remaining work is the PR-flow
-  verification checklist.
+- None.
 
 ## Next Up
 
@@ -143,8 +152,8 @@ Update this file after every meaningful implementation change.
    events into DB.
 5. Vitest for pure core with captured webhook fixtures.
 6. End-to-end verification on scratch repo via webhook redelivery.
-7. Minimal dashboard: Clerk GitHub OAuth, installations via
-   `GET /user/installations`, reviews table + detail view, polling.
+7. Minimal dashboard: installations via `GET /user/installations`, reviews
+   table + detail view, polling.
 8. Install the same `diffguard-dev` app on owner's real repos; dogfood.
 9. Invite 4–5 beta users.
 
