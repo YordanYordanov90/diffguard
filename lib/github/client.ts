@@ -3,6 +3,12 @@ import { z } from "zod";
 
 import { INSTRUCTIONS_TOKEN_CAP } from "../config/constants";
 import { parseEnv } from "../config/env";
+import {
+  parseAccessibleInstallations,
+  type AccessibleInstallation,
+} from "./accessible-installation";
+
+export type { AccessibleInstallation } from "./accessible-installation";
 
 type InstallationOctokit = Awaited<ReturnType<App["getInstallationOctokit"]>>;
 type AppClient = Pick<App, "getInstallationOctokit">;
@@ -14,8 +20,6 @@ export type GitHubClientDependencies = {
 };
 
 export type InstallationClient = InstallationOctokit;
-
-const installationSchema = z.object({ id: z.number().int().positive() });
 
 const fileResponseSchema = z.object({
   type: z.literal("file"),
@@ -190,13 +194,21 @@ export function createGitHubClient(
       return z.object({ id: z.number().int().positive() }).parse(response.data).id;
     },
 
-    async getUserInstallations(userOauthToken: string) {
+    /**
+     * Returns validated AccessibleInstallation descriptors for the signed-in
+     * user. Invalid items (e.g. non-github.com html_url) are dropped, never
+     * trusted into the dashboard read model.
+     */
+    async getUserInstallations(
+      userOauthToken: string,
+    ): Promise<AccessibleInstallation[]> {
       const installations = await dependencies
         .createOAuthClient(userOauthToken)
         .paginate("GET /user/installations", { per_page: 100 });
-      return z.array(installationSchema).parse(installations).map(
-        (installation) => installation.id,
-      );
+      if (!Array.isArray(installations)) {
+        throw new Error("GitHub installations response was not an array.");
+      }
+      return parseAccessibleInstallations(installations);
     },
   };
 }

@@ -56,3 +56,10 @@ export function githubPrUrl(repositoryName: string, prNumber: number): string {
 export function formatSkipReason(reason: string): string {
   return reason.replaceAll("_", " ");
 }
+
+export {
+  formatCoverageDetail,
+  formatRelativeTime,
+  repositorySelectionLabel,
+  installationStateLabel,
+} from "./coverage";

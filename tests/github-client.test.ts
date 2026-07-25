@@ -34,10 +34,26 @@ function createMockClient(instructionResponse: unknown = {
   const installationClient = {
     request,
   } as unknown as InstallationClient;
+  const oauthInstallations = [
+    {
+      id: 42,
+      account: { login: "acme", type: "Organization" },
+      repository_selection: "all",
+      html_url: "https://github.com/organizations/acme/settings/installations/42",
+      suspended_at: null,
+    },
+    {
+      id: 84,
+      account: { login: "owner", type: "User" },
+      repository_selection: "selected",
+      html_url: "https://github.com/settings/installations/84",
+      suspended_at: null,
+    },
+  ];
   const oauthRequest = vi.fn().mockResolvedValue({
-    data: { installations: [{ id: 42 }, { id: 84 }] },
+    data: { installations: oauthInstallations },
   });
-  const oauthPaginate = vi.fn().mockResolvedValue([{ id: 42 }, { id: 84 }]);
+  const oauthPaginate = vi.fn().mockResolvedValue(oauthInstallations);
   const dependencies = {
     app: {
       getInstallationOctokit: vi.fn().mockResolvedValue(installationClient),
@@ -102,18 +118,74 @@ describe("GitHub client", () => {
     );
   });
 
-  it("returns installation IDs from the authenticated user's GitHub access", async () => {
+  it("returns validated installation descriptors from the authenticated user's GitHub access", async () => {
     const { client, oauthPaginate } = createMockClient();
 
-    await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([42, 84]);
+    await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([
+      {
+        id: 42,
+        account: { login: "acme", type: "Organization" },
+        repository_selection: "all",
+        html_url: "https://github.com/organizations/acme/settings/installations/42",
+        suspended_at: null,
+      },
+      {
+        id: 84,
+        account: { login: "owner", type: "User" },
+        repository_selection: "selected",
+        html_url: "https://github.com/settings/installations/84",
+        suspended_at: null,
+      },
+    ]);
     expect(oauthPaginate).toHaveBeenCalledWith("GET /user/installations", { per_page: 100 });
+  });
+
+  it("drops installations with non-github.com configuration URLs", async () => {
+    const oauthPaginate = vi.fn().mockResolvedValue([
+      {
+        id: 7,
+        account: { login: "safe", type: "User" },
+        repository_selection: "selected",
+        html_url: "https://github.com/settings/installations/7",
+        suspended_at: null,
+      },
+      {
+        id: 9,
+        account: { login: "evil", type: "User" },
+        repository_selection: "all",
+        html_url: "https://evil.example/phish",
+        suspended_at: null,
+      },
+    ]);
+    const client = createGitHubClient({
+      app: { getInstallationOctokit: vi.fn() },
+      createOAuthClient: () => ({ paginate: oauthPaginate }),
+    } as unknown as GitHubClientDependencies);
+
+    await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([
+      {
+        id: 7,
+        account: { login: "safe", type: "User" },
+        repository_selection: "selected",
+        html_url: "https://github.com/settings/installations/7",
+        suspended_at: null,
+      },
+    ]);
   });
 
   it("resolves OAuth installations without constructing the GitHub App client", async () => {
     const appAccess = vi.fn(() => {
       throw new Error("App private key must not be required for OAuth access");
     });
-    const oauthPaginate = vi.fn().mockResolvedValue([{ id: 7 }]);
+    const oauthPaginate = vi.fn().mockResolvedValue([
+      {
+        id: 7,
+        account: { login: "owner", type: "User" },
+        repository_selection: "selected",
+        html_url: "https://github.com/settings/installations/7",
+        suspended_at: null,
+      },
+    ]);
     const client = createGitHubClient({
       get app() {
         return appAccess();
@@ -121,7 +193,15 @@ describe("GitHub client", () => {
       createOAuthClient: () => ({ paginate: oauthPaginate }),
     } as unknown as GitHubClientDependencies);
 
-    await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([7]);
+    await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([
+      {
+        id: 7,
+        account: { login: "owner", type: "User" },
+        repository_selection: "selected",
+        html_url: "https://github.com/settings/installations/7",
+        suspended_at: null,
+      },
+    ]);
     expect(appAccess).not.toHaveBeenCalled();
   });
 });
