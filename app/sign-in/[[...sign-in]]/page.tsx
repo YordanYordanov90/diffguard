@@ -1,8 +1,7 @@
-import { SignIn } from "@clerk/nextjs";
 import { GitBranch, ShieldCheck } from "lucide-react";
 
 import { AuthShell } from "@/components/auth/auth-shell";
-import { clerkAppearance } from "@/lib/auth/clerk-appearance";
+import { GitHubAuthForm } from "@/components/auth/github-auth-form";
 
 export default function SignInPage() {
   return (
@@ -14,17 +13,13 @@ export default function SignInPage() {
             GitHub access
           </p>
           <h1 className="text-4xl font-semibold tracking-[-0.05em] text-text-primary">
-            Welcome back.
+            Continue your review loop.
           </h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-text-muted">
-            Pick up where your pull requests left off.
+            Use GitHub to open the reviews and installations you can access.
           </p>
         </div>
-        <SignIn
-          appearance={clerkAppearance}
-          fallbackRedirectUrl="/dashboard"
-          signUpUrl="/sign-up"
-        />
+        <GitHubAuthForm mode="sign-in" />
         <p className="mt-6 flex items-center justify-center gap-2 text-center text-xs text-text-muted">
           <ShieldCheck className="h-4 w-4 text-accent-primary" aria-hidden />
           Your repository code is never stored.

@@ -1,8 +1,7 @@
-import { SignUp } from "@clerk/nextjs";
 import { GitBranch, ShieldCheck } from "lucide-react";
 
 import { AuthShell } from "@/components/auth/auth-shell";
-import { clerkAppearance } from "@/lib/auth/clerk-appearance";
+import { GitHubAuthForm } from "@/components/auth/github-auth-form";
 
 export default function SignUpPage() {
   return (
@@ -14,17 +13,13 @@ export default function SignUpPage() {
             GitHub access
           </p>
           <h1 className="text-4xl font-semibold tracking-[-0.05em] text-text-primary">
-            Review with confidence.
+            Set up DiffGuard with GitHub.
           </h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-text-muted">
-            Connect GitHub once. DiffGuard handles the review loop from there.
+            Create your account with the GitHub identity you already use for pull requests.
           </p>
         </div>
-        <SignUp
-          appearance={clerkAppearance}
-          fallbackRedirectUrl="/dashboard"
-          signInUrl="/sign-in"
-        />
+        <GitHubAuthForm mode="sign-up" />
         <p className="mt-6 flex items-center justify-center gap-2 text-center text-xs text-text-muted">
           <ShieldCheck className="h-4 w-4 text-accent-primary" aria-hidden />
           GitHub access is used only to resolve your installations.
