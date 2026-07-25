@@ -8,7 +8,12 @@ const DEFAULT_LIMIT = 50;
 
 export type DashboardReviewsResult =
   | { status: "github-authorization-required" }
-  | { status: "ready"; installationIds: number[]; reviews: DashboardReview[] };
+  | {
+      status: "ready";
+      installationIds: number[];
+      reviews: DashboardReview[];
+    }
+  | { status: "error" };
 
 /**
  * Tenant-scoped dashboard read. Installation IDs come only from the
@@ -20,10 +25,14 @@ export async function getDashboardReviews(
   const access = await getDashboardAccess();
   if (access.status === "github-authorization-required") return access;
 
-  const rows = await listReviews(access.installationIds, limit);
-  return {
-    status: "ready",
-    installationIds: access.installationIds,
-    reviews: rows.map(toDashboardReview),
-  };
+  try {
+    const rows = await listReviews(access.installationIds, limit);
+    return {
+      status: "ready",
+      installationIds: access.installationIds,
+      reviews: rows.map(toDashboardReview),
+    };
+  } catch {
+    return { status: "error" };
+  }
 }

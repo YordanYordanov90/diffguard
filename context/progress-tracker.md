@@ -5,13 +5,12 @@ Update this file after every meaningful implementation change.
 ## Current Phase
 
 - Phase 1 core pipeline and dashboard foundation are complete.
-- Dashboard operations expansion is specified in Features 18–20; implementation
-  has not started.
+- Dashboard operations expansion: Features 18–19 implemented; Feature 20 next.
 
 ## Current Goal
 
-- Implement the dashboard operations expansion in documented increments,
-  then dogfood it on real repositories before inviting 4–5 beta users.
+- Implement Feature 20 (repository coverage page), then dogfood the expanded
+  dashboard on real repositories before inviting 4–5 beta users.
 
 ## Completed
 
@@ -165,6 +164,14 @@ Update this file after every meaningful implementation change.
   lightweight Overview landing page using existing review data. Repository
   navigation is intentionally deferred until Feature 20 creates its route.
   Lint, all 75 tests, and the production build pass.
+- Feature 19 (Dashboard overview) — completed 2026-07-25:
+  GitHub access resolution now returns validated `AccessibleInstallation`
+  descriptors (id, account, `repository_selection`, github.com `html_url`,
+  suspension). Shared tenant-scoped queries list repositories, latest review
+  metadata, and reviews-today counts. `/dashboard` leads with the coverage
+  rail, restrained summary totals, recent reviews with existing detail sheet
+  behavior, and directed empty/error states. Installation scope remains
+  GitHub-derived only. Lint, all 85 Vitest tests, and production build pass.
 
 ## In Progress
 
@@ -172,13 +179,11 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-1. Feature 19 — shared tenant-scoped coverage read model and coverage-first
-   overview.
-2. Feature 20 — full repository coverage page, navigation item, and GitHub
-   management flow.
-3. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
+1. Feature 20 — full repository coverage page, navigation item, and GitHub
+   management flow (reuses Feature 19 coverage read model).
+2. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
    dashboard, then invite 4–5 beta users.
-4. Later Phase 2 candidates: inline comments and full-file context.
+3. Later Phase 2 candidates: inline comments and full-file context.
 
 ## Open Questions
 

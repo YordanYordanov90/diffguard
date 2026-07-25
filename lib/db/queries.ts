@@ -418,6 +418,80 @@ export async function listReviews(
     .limit(limit);
 }
 
+/**
+ * Tenant-scoped repository inventory for dashboard coverage (Features 19–20).
+ * Installation IDs must come from GitHub access resolution only.
+ */
+export async function listRepositoriesByInstallations(
+  installationIds: number[],
+  database: Database = defaultDb,
+) {
+  if (installationIds.length === 0) return [];
+
+  return database
+    .select({
+      id: repositories.id,
+      installationId: repositories.installationId,
+      fullName: repositories.fullName,
+      enabled: repositories.enabled,
+    })
+    .from(repositories)
+    .where(inArray(repositories.installationId, installationIds))
+    .orderBy(repositories.fullName);
+}
+
+/**
+ * Latest review metadata per repository for authorized installations.
+ * Uses Postgres DISTINCT ON; ordered for stable distinct selection.
+ */
+export async function listLatestReviewsByRepository(
+  installationIds: number[],
+  database: Database = defaultDb,
+) {
+  if (installationIds.length === 0) return [];
+
+  return database
+    .selectDistinctOn([reviews.repositoryId], {
+      repositoryId: reviews.repositoryId,
+      installationId: reviews.installationId,
+      status: reviews.status,
+      verdict: reviews.verdict,
+      updatedAt: reviews.updatedAt,
+      createdAt: reviews.createdAt,
+    })
+    .from(reviews)
+    .where(inArray(reviews.installationId, installationIds))
+    .orderBy(reviews.repositoryId, desc(reviews.updatedAt));
+}
+
+/** Count non-skipped reviews created today (UTC) across authorized installations. */
+export async function countReviewsTodayForInstallations(
+  installationIds: number[],
+  now = new Date(),
+  database: Database = defaultDb,
+) {
+  if (installationIds.length === 0) return 0;
+
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const startOfNextDay = new Date(startOfDay);
+  startOfNextDay.setUTCDate(startOfNextDay.getUTCDate() + 1);
+
+  const rows = await database
+    .select({ id: reviews.id })
+    .from(reviews)
+    .where(
+      and(
+        inArray(reviews.installationId, installationIds),
+        gte(reviews.createdAt, startOfDay),
+        lt(reviews.createdAt, startOfNextDay),
+        ne(reviews.status, "skipped"),
+      ),
+    );
+
+  return rows.length;
+}
+
 export async function getReviewDetail(
   reviewId: string,
   installationIds: number[],

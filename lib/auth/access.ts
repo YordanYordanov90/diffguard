@@ -4,10 +4,13 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { githubAppAuth } from "./github-app";
+import {
+  accessibleInstallationsSchema,
+  type AccessibleInstallation,
+} from "@/lib/github/accessible-installation";
 import { getUserInstallations } from "@/lib/github/client";
 
 const CACHE_TTL_SECONDS = 300;
-const installationIdsSchema = z.array(z.number().int().positive());
 
 /** Dashboard access only needs Redis for the installation cache — not App secrets. */
 const dashboardCacheEnvSchema = z.object({
@@ -17,7 +20,11 @@ const dashboardCacheEnvSchema = z.object({
 
 type Cache = {
   get: (key: string) => Promise<unknown>;
-  set: (key: string, value: number[], options: { ex: number }) => Promise<unknown>;
+  set: (
+    key: string,
+    value: AccessibleInstallation[],
+    options: { ex: number },
+  ) => Promise<unknown>;
 };
 
 export class GitHubAuthorizationRequiredError extends Error {
@@ -29,14 +36,20 @@ export class GitHubAuthorizationRequiredError extends Error {
 
 export type DashboardAccess =
   | { status: "github-authorization-required" }
-  | { status: "ready"; installationIds: number[] };
+  | {
+      status: "ready";
+      installations: AccessibleInstallation[];
+      installationIds: number[];
+    };
 
 export type AccessibleInstallationDependencies = {
   getGithubToken: (userId: string) => Promise<string | null>;
-  getUserInstallations: (token: string) => Promise<number[]>;
+  getUserInstallations: (token: string) => Promise<AccessibleInstallation[]>;
   revokeGithubToken: (userId: string) => Promise<void>;
   cache: Cache;
 };
+
+export type { AccessibleInstallation };
 
 function isGithubAuthenticationFailure(error: unknown) {
   if (typeof error !== "object" || error === null || !("status" in error)) {
@@ -49,11 +62,22 @@ function cacheKey(userId: string) {
   return `dashboard:installations:${userId}`;
 }
 
+function toAccess(installations: AccessibleInstallation[]): Extract<
+  DashboardAccess,
+  { status: "ready" }
+> {
+  return {
+    status: "ready",
+    installations,
+    installationIds: installations.map((installation) => installation.id),
+  };
+}
+
 export async function resolveAccessibleInstallations(
   userId: string,
   dependencies: AccessibleInstallationDependencies,
-) {
-  const cached = installationIdsSchema.safeParse(
+): Promise<AccessibleInstallation[]> {
+  const cached = accessibleInstallationsSchema.safeParse(
     await dependencies.cache.get(cacheKey(userId)),
   );
   if (cached.success) return cached.data;
@@ -61,9 +85,9 @@ export async function resolveAccessibleInstallations(
   const token = await dependencies.getGithubToken(userId);
   if (!token) return [];
 
-  let installationIds: number[];
+  let installations: AccessibleInstallation[];
   try {
-    installationIds = installationIdsSchema.parse(
+    installations = accessibleInstallationsSchema.parse(
       await dependencies.getUserInstallations(token),
     );
   } catch (error) {
@@ -71,10 +95,10 @@ export async function resolveAccessibleInstallations(
     await dependencies.revokeGithubToken(userId);
     throw new GitHubAuthorizationRequiredError();
   }
-  await dependencies.cache.set(cacheKey(userId), installationIds, {
+  await dependencies.cache.set(cacheKey(userId), installations, {
     ex: CACHE_TTL_SECONDS,
   });
-  return installationIds;
+  return installations;
 }
 
 function createDefaultDependencies(): AccessibleInstallationDependencies {
@@ -112,16 +136,16 @@ export async function getDashboardAccess(): Promise<DashboardAccess> {
   const { userId } = await auth();
   if (!userId) return { status: "github-authorization-required" };
 
-  const dependencies = defaultDependencies ??= createDefaultDependencies();
+  const dependencies = (defaultDependencies ??= createDefaultDependencies());
   const token = await dependencies.getGithubToken(userId);
   if (!token) return { status: "github-authorization-required" };
 
   try {
-    const installationIds = await resolveAccessibleInstallations(userId, {
+    const installations = await resolveAccessibleInstallations(userId, {
       ...dependencies,
       getGithubToken: async () => token,
     });
-    return { status: "ready", installationIds };
+    return toAccess(installations);
   } catch (error) {
     if (error instanceof GitHubAuthorizationRequiredError) {
       return { status: "github-authorization-required" };
