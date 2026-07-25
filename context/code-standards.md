@@ -21,7 +21,8 @@
 ## Next.js
 
 - Default to server components; `use client` only where interactivity
-  requires it (dashboard table polling).
+  requires it (mobile navigation, dashboard polling, repository search,
+  and the review detail sheet). Keep client boundaries leaf-level.
 - Route handlers do one job each. Webhook route: verify → validate →
   rate-limit → enqueue → respond. Worker route: verify → idempotency →
   pipeline → persist.
@@ -56,6 +57,10 @@
   update land in the same increment.
 - Usage/caps are derived by counting `reviews` rows — no separate
   counter table to keep consistent.
+- Dashboard totals and repository coverage are derived from installations,
+  repositories, and reviews. Do not persist presentation-only counters.
+- Every dashboard query accepts the GitHub-derived installation allowlist
+  server-side and filters on it. Never accept tenant scope from the client.
 
 ## Testing
 
@@ -65,12 +70,17 @@
   and used as test inputs.
 - Pipeline verification happens on the dev deployment via GitHub's
   webhook redelivery + Vercel logs + the dashboard.
+- Dashboard tests cover authorization filtering, derived status/count
+  formatting, navigation accessibility, and directed empty/error states.
 
 ## File Organization
 
 - `app/api/webhooks/github/` — webhook receiver route
 - `app/api/jobs/review/` — QStash worker route
-- `app/(dashboard)/` — dashboard pages and components
+- `app/(dashboard)/` — dashboard routes and shared server-rendered shell
+- `components/dashboard/` — dashboard navigation, coverage, tables, and
+  leaf-level client interactions
+- `lib/dashboard/` — serializable read models and pure presentation mapping
 - `lib/github/` — App auth, diff fetch, comment upsert, access checks
 - `lib/review/` — pure review core (filter, prompt, schema, render)
 - `lib/db/` — Drizzle schema, client, queries

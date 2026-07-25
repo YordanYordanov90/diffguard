@@ -17,8 +17,9 @@ Prove the pipeline on the dev environment before prod exists anywhere.
   with skipped-files disclosure.
 - Tampered webhook signature (curl) → 401, nothing in DB.
 - Exhaust daily cap (set low temporarily) → `daily_cap` skips, spend stops.
-- Fix any bugs via redelivery loop; only then register/install prod app
-  on owner's real repos (per 00) and repeat the first two checks there.
+- Fix any bugs via the redelivery loop; only then install the same
+  `diffguard-dev` App on the owner's real repositories (per 00) and repeat
+  the first two checks there.
 
 ## Out of scope
 Dashboard (16/17). Beta invites.

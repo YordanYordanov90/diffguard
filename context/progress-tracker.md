@@ -4,12 +4,14 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 1 complete for the core pipeline + minimal dashboard. Dogfood and
-  beta invite remain.
+- Phase 1 core pipeline and dashboard foundation are complete.
+- Dashboard operations expansion is specified in Features 18–20; implementation
+  has not started.
 
 ## Current Goal
 
-- Install on real repos, dogfood, then invite 4–5 beta users.
+- Implement the dashboard operations expansion in documented increments,
+  then dogfood it on real repositories before inviting 4–5 beta users.
 
 ## Completed
 
@@ -152,6 +154,11 @@ Update this file after every meaningful implementation change.
   `listReviews` (no client-supplied installation IDs). shadcn table/badge/
   sheet/button/skeleton added and mapped to DiffGuard tokens. Format helper
   unit tests, full Vitest suite (67), lint, and production build pass.
+- Dashboard operations specification — completed 2026-07-25 (documentation
+  only): Features 18–20 define the responsive shell, coverage-first overview,
+  and repository inventory. The architecture, GitHub access contract, UI
+  vocabulary, responsive behavior, security boundary, and progress plan are
+  synchronized across `context/`. No application code changed.
 
 ## In Progress
 
@@ -159,16 +166,21 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-1. Install the same `diffguard-dev` app on owner's real repos; dogfood via
-   dashboard while a PR flows through.
-2. Invite 4–5 beta users (Phase 1 complete once dogfood is clean).
-3. Phase 2 candidates: inline comments, full-file context, onboarding polish.
+1. Feature 18 — responsive dashboard shell and navigation.
+2. Feature 19 — shared tenant-scoped coverage read model and coverage-first
+   overview.
+3. Feature 20 — full repository coverage page and GitHub management flow.
+4. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
+   dashboard, then invite 4–5 beta users.
+5. Later Phase 2 candidates: inline comments and full-file context.
 
 ## Open Questions
 
 - Concrete values: debounce seconds (60–90), daily cap, rate-limit window
   — chosen for Feature 02 as 75 seconds, 20 reviews/day, and 10 events/minute
   per installation; revisit after dev verification.
+- None blocking Features 18–20. Settings, billing, usage analytics, and
+  in-app repository mutations remain explicitly deferred.
 
 ## Architecture Decisions
 
@@ -208,9 +220,15 @@ Update this file after every meaningful implementation change.
   scratch repo first, then install the same app on real repos when
   ready; promote by updating env vars/secrets in place, not by
   standing up a second app. Pure core unit-tested locally regardless.
-- Dashboard: minimal read-only operations view with a two-step GitHub
-  onboarding state. GitHub owns the final App-installation repository picker;
-  DiffGuard links to it but never chooses repositories for the user.
+- Dashboard: read-only operations workspace with focused onboarding followed
+  by Overview, Reviews, and Repositories. Desktop uses a persistent sidebar;
+  mobile uses a compact top bar and Sheet navigation. The signature coverage
+  rail makes installation/repository protection visible without generic
+  analytics decoration.
+- Repository access: GitHub owns `All repositories` versus
+  `Selected repositories`. DiffGuard validates and displays GitHub installation
+  metadata and opens the installation's GitHub configuration URL; it never
+  grants itself access or trusts client-supplied installation IDs.
 - `schemas.md` added as seventh context file; updated in the same
   increment as any shape change.
 

@@ -99,6 +99,32 @@ OAuth state is single-use and expires after ten minutes. Access and refresh
 tokens are AES-256-GCM encrypted before being written to Upstash Redis under a
 Clerk-user-scoped key; raw tokens are never logged or sent to the client.
 
+## Dashboard GitHub Access Contract
+
+`GET /user/installations` is external input and is reduced to this validated
+shape before authorization or display:
+
+```ts
+AccessibleInstallation = {
+  id: number
+  account: {
+    login: string
+    type: string
+  }
+  repository_selection: "all" | "selected"
+  html_url: string                 // HTTPS URL with exact github.com origin
+  suspended_at: string | null
+}
+```
+
+The server derives the dashboard installation-id allowlist from
+`AccessibleInstallation[]`. The descriptor cache is keyed by Clerk user id
+and remains server-only. `html_url` is accepted only when its parsed origin is
+exactly `https://github.com` and is used only for the explicit
+`Manage on GitHub` action. Repository rows and latest-review metadata are
+derived from existing database tables; no new persisted dashboard schema is
+introduced for Features 18–20.
+
 ## LLM Output Contract (Zod — `lib/review/schema.ts`)
 
 ```ts

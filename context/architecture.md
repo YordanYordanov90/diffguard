@@ -5,7 +5,7 @@
 | Layer      | Technology                          | Role                                          |
 | ---------- | ----------------------------------- | --------------------------------------------- |
 | Framework  | Next.js (App Router) + TypeScript   | Webhook route, worker route, dashboard        |
-| UI         | Tailwind CSS + shadcn/ui            | Minimal read-only dashboard                   |
+| UI         | Tailwind CSS + shadcn/ui            | Read-only operations workspace                |
 | Auth       | Clerk (GitHub OAuth only)           | Dashboard sign-in; GitHub identity source     |
 | Database   | Neon Postgres + Drizzle ORM         | Installations, repos, reviews (metadata only) |
 | Queue      | Upstash QStash                      | Debounced, retried review jobs                |
@@ -23,8 +23,9 @@
 - `app/api/jobs/review/` — QStash worker callback. Verifies QStash
   signature, enforces idempotency and daily cap, runs the review pipeline,
   writes results, posts/edits the PR comment. `maxDuration = 300`.
-- `app/(dashboard)/` — Clerk-gated read-only pages. Resolves accessible
-  installations from GitHub at request time; reads `reviews` only.
+- `app/(dashboard)/` — Clerk-gated read-only workspace. Resolves accessible
+  installations from GitHub at request time; reads tenant-scoped
+  installations, repositories, and reviews.
 - `lib/github/` — GitHub App auth (installation tokens), diff fetching,
   comment upsert, `/user/installations` access resolution.
 - `lib/review/` — pure core: diff filtering/prioritization, prompt
@@ -49,11 +50,19 @@
 - GitHub authorization: the DiffGuard GitHub App user OAuth flow is completed
   once after Clerk sign-in. Its user access/refresh tokens are encrypted in
   Upstash Redis, keyed by Clerk user id; access tokens refresh automatically.
-- Authorization source of truth: GitHub. Accessible installations are
-  derived per session from `GET /user/installations` using the DiffGuard
-  GitHub App user access token (short-lived cache allowed). No users table; no
-  manual installation linking; `installation_id` is never trusted from any
-  client-supplied parameter.
+- Authorization source of truth: GitHub. Accessible installation descriptors
+  are derived per session from `GET /user/installations` using the DiffGuard
+  GitHub App user access token (short-lived cache allowed). The validated
+  result includes the installation id, account identity, repository selection
+  mode, GitHub configuration URL, and suspension state. Server-side dashboard
+  reads derive their installation-id allowlist from these descriptors.
+- Repository-selection source of truth: GitHub. `All repositories` versus
+  `Selected repositories` is displayed from GitHub's installation metadata.
+  Changes open the validated GitHub installation `html_url`, restricted to
+  the exact `https://github.com` origin; DiffGuard does not implement
+  repository grant/revoke mutations.
+- No users table; no manual installation linking; `installation_id` is never
+  trusted from a URL, query string, form value, or client state.
 - GitHub API access: short-lived installation tokens minted per job from
   the App private key. No PATs anywhere.
 - Both public endpoints (webhook, worker) require signature verification
@@ -79,3 +88,24 @@
 8. Model/provider selection is read from installation config through a
    single `getModel()` function; no hardcoded model strings in the
    pipeline.
+9. Every dashboard aggregate, installation, repository, and review read is
+   filtered by the GitHub-derived installation allowlist.
+10. Repository access changes happen on GitHub. DiffGuard may display and
+    refresh access state but never grants itself access through dashboard
+    controls.
+
+## Dashboard Read Model
+
+- The dashboard shell is server-rendered and shared by:
+  `/dashboard`, `/dashboard/reviews`, and `/dashboard/repositories`.
+  Only mobile navigation, polling, search, and detail-sheet interactions
+  require client components.
+- Overview data is derived from tenant-scoped installation, repository, and
+  review queries. No summary counters are persisted.
+- Repository coverage joins each authorized repository to its installation
+  and latest review metadata. A repository without reviews is
+  `Awaiting first review`; it is not treated as a failure.
+- Repository-filtered review history confirms the repository belongs to the
+  GitHub-derived installation allowlist before applying the filter.
+- A manual repository refresh bypasses or invalidates the five-minute
+  installation-access cache after the user changes access on GitHub.

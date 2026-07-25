@@ -9,11 +9,19 @@ and the current state (`progress-tracker.md`). Always implement against
 these specs — do not infer or invent behavior, fields, or enums that are
 not defined here.
 
+Numbered files under `context/features/` are the implementation ledger.
+Completed feature files remain historical contracts; a later feature may
+replace their layout while preserving their security and data invariants.
+
 ## Scoping Rules
 
 - Work on one feature unit at a time.
 - Prefer small, verifiable increments over large speculative changes.
 - Do not combine unrelated system boundaries in a single step.
+- For dashboard expansion, implement in order: shell/navigation (18),
+  overview plus its shared repository read model (19), then the full
+  repository coverage page (20). Query work ships with the feature that uses
+  it; no speculative settings layer.
 
 ## When to Split Work
 
@@ -54,6 +62,8 @@ implementation changes:
   `schemas.md` (code is source of truth; a stale `schemas.md` is a bug)
 - Conventions or standards → `code-standards.md`
 - Feature scope → `project-overview.md`
+- Dashboard information architecture, vocabulary, responsive behavior, or
+  visual contract → `ui-context.md`
 - Progress, decisions, open questions → `progress-tracker.md`
 
 ## Security Checks Per Increment
