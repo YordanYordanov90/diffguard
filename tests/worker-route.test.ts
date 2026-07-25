@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   handleReviewWorker,
   type ReviewWorkerDependencies,
-} from "@/app/api/jobs/review/route";
+} from "@/lib/workers/review";
 import { ReviewFailedError } from "@/lib/review/generate";
 
 const headSha = "0123456789abcdef0123456789abcdef01234567";

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   handleGitHubWebhook,
   verifyGitHubSignature,
-} from "@/app/api/webhooks/github/route";
+} from "@/lib/webhooks/github";
 
 const secret = "test-webhook-secret";
 const sha = "0123456789abcdef0123456789abcdef01234567";
