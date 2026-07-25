@@ -54,7 +54,7 @@ function createDefaultDependencies(): AccessibleInstallationDependencies {
   return {
     async getGithubToken(userId) {
       const client = await clerkClient();
-      const response = await client.users.getUserOauthAccessToken(userId, "github");
+      const response = await client.users.getUserOauthAccessToken(userId, "oauth_github");
       return response.data[0]?.token ?? null;
     },
     getUserInstallations,

@@ -50,3 +50,11 @@ body {
   background-clip: text;
   color: transparent;
 }
+
+.auth-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--border-default) 65%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--border-default) 65%, transparent) 1px, transparent 1px);
+  background-size: 4rem 4rem;
+  mask-image: linear-gradient(to bottom, black, transparent 80%);
+}
