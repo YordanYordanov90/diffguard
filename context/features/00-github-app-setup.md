@@ -26,6 +26,9 @@ one Vercel project pointed at the repo.
 - Create a scratch GitHub repo for testing; install the app on it first
 to verify end-to-end before installing on real repos.
 - Create Clerk application with GitHub as the only OAuth provider.
+- Enable the GitHub App web application flow and configure its client ID,
+  client secret, and exact OAuth callback URL for the dashboard authorization
+  route. Generate a 32-byte encryption key for storing OAuth tokens in Redis.
 
 
 
@@ -37,4 +40,3 @@ Any application code. Installing the app on real repos (Feature 15 gate).
 
 - App appears in GitHub settings with correct permissions/events.
 - All env vars present in the Vercel project.
-

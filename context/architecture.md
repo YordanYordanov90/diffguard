@@ -45,11 +45,14 @@
 
 ## Auth and Access Model
 
-- Dashboard sign-in: Clerk with GitHub OAuth as the only method.
+- Dashboard sign-in: Clerk with GitHub OAuth as the only identity method.
+- GitHub authorization: the DiffGuard GitHub App user OAuth flow is completed
+  once after Clerk sign-in. Its user access/refresh tokens are encrypted in
+  Upstash Redis, keyed by Clerk user id; access tokens refresh automatically.
 - Authorization source of truth: GitHub. Accessible installations are
-  derived per session from `GET /user/installations` using the user's
-  OAuth token (short-lived cache allowed). No users table; no manual
-  installation linking; `installation_id` is never trusted from any
+  derived per session from `GET /user/installations` using the DiffGuard
+  GitHub App user access token (short-lived cache allowed). No users table; no
+  manual installation linking; `installation_id` is never trusted from any
   client-supplied parameter.
 - GitHub API access: short-lived installation tokens minted per job from
   the App private key. No PATs anywhere.

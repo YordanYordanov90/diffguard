@@ -1,12 +1,19 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { Redis } from "@upstash/redis";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { parseEnv } from "@/lib/config/env";
+import { githubAppAuth } from "./github-app";
 import { getUserInstallations } from "@/lib/github/client";
 
 const CACHE_TTL_SECONDS = 300;
 const installationIdsSchema = z.array(z.number().int().positive());
+
+/** Dashboard access only needs Redis for the installation cache — not App secrets. */
+const dashboardCacheEnvSchema = z.object({
+  UPSTASH_REDIS_REST_URL: z.string().url(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
+});
 
 type Cache = {
   get: (key: string) => Promise<unknown>;
@@ -45,18 +52,17 @@ export async function resolveAccessibleInstallations(
 }
 
 function createDefaultDependencies(): AccessibleInstallationDependencies {
-  const env = parseEnv();
+  const env = dashboardCacheEnvSchema.parse({
+    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+    UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
   const redis = new Redis({
     url: env.UPSTASH_REDIS_REST_URL,
     token: env.UPSTASH_REDIS_REST_TOKEN,
   });
 
   return {
-    async getGithubToken(userId) {
-      const client = await clerkClient();
-      const response = await client.users.getUserOauthAccessToken(userId, "oauth_github");
-      return response.data[0]?.token ?? null;
-    },
+    getGithubToken: (userId: string) => githubAppAuth().getAccessToken(userId),
     getUserInstallations,
     cache: {
       get: (key) => redis.get(key),
@@ -76,5 +82,17 @@ export async function getAccessibleInstallations() {
 
 export async function requireDashboardInstallations() {
   await auth.protect();
-  return getAccessibleInstallations();
+  const { userId } = await auth();
+  if (!userId) return [];
+
+  const dependencies = defaultDependencies ??= createDefaultDependencies();
+  const token = await dependencies.getGithubToken(userId);
+  if (!token) {
+    redirect("/api/auth/github/start?returnTo=%2Fdashboard");
+  }
+
+  return resolveAccessibleInstallations(userId, {
+    ...dependencies,
+    getGithubToken: async () => token,
+  });
 }

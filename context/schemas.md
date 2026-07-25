@@ -74,6 +74,31 @@ INDEX  (installation_id, created_at)          // dashboard + daily cap
 Usage/caps are derived: `count(reviews) where installation_id = X and
 created_at >= start_of_day and status != 'skipped'`.
 
+## GitHub App OAuth Contracts (Zod — `lib/auth/github-app.ts`)
+
+The one-time dashboard authorization flow stores only encrypted token data in
+Redis. GitHub's token exchange response is validated before anything is saved:
+
+```ts
+GitHubAppTokenExchange = {
+  access_token: string
+  token_type: "bearer"
+  scope: string
+  refresh_token?: string
+  expires_in?: number
+  refresh_token_expires_in?: number
+}
+
+PendingGitHubOAuthState = {
+  userId: string       // Clerk user id
+  returnTo: string     // local application path only
+}
+```
+
+OAuth state is single-use and expires after ten minutes. Access and refresh
+tokens are AES-256-GCM encrypted before being written to Upstash Redis under a
+Clerk-user-scoped key; raw tokens are never logged or sent to the client.
+
 ## LLM Output Contract (Zod — `lib/review/schema.ts`)
 
 ```ts

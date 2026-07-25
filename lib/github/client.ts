@@ -28,18 +28,28 @@ const pullResponseSchema = z.object({
 });
 
 function createDefaultDependencies(): GitHubClientDependencies {
-  const env = parseEnv();
-  const privateKey = Buffer.from(
-    env.GITHUB_APP_PRIVATE_KEY_BASE64,
-    "base64",
-  ).toString("utf8");
-  const app = new App({
-    appId: Number(env.GITHUB_APP_ID),
-    privateKey,
-  });
+  let app: AppClient | undefined;
 
   return {
-    app,
+    /**
+     * Lazily construct the GitHub App client. OAuth-only calls
+     * (`getUserInstallations`) never need the App private key — required
+     * for the dashboard access path.
+     */
+    get app(): AppClient {
+      if (!app) {
+        const env = parseEnv();
+        const privateKey = Buffer.from(
+          env.GITHUB_APP_PRIVATE_KEY_BASE64,
+          "base64",
+        ).toString("utf8");
+        app = new App({
+          appId: Number(env.GITHUB_APP_ID),
+          privateKey,
+        });
+      }
+      return app;
+    },
     createOAuthClient: (token) => new Octokit({ auth: token }),
   };
 }
