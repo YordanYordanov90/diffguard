@@ -139,6 +139,11 @@ Update this file after every meaningful implementation change.
   dashboard state links users to GitHub's App installation screen to choose
   repositories, then explains how to trigger their first PR review. The App
   slug is configurable through `GITHUB_APP_SLUG` (default `diffguard-dev`).
+- Custom Clerk auth UI — completed 2026-07-25: the sign-in and sign-up pages
+  now use a native DiffGuard GitHub access panel built on Clerk's `useSignIn`
+  and `useSignUp` hooks. Clerk's redirect callback component retains OAuth
+  session completion and sign-up CAPTCHA protection; the generic embedded
+  Clerk card is no longer rendered.
 - Feature 17 (Dashboard UI) — completed 2026-07-25:
   Read-only reviews table (repo mono, GitHub PR link, status badge, findings
   count, model, duration, timestamp) with ~5s polling + manual refresh;

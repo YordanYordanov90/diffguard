@@ -9,7 +9,8 @@ says they may access. No UI beyond Clerk's own components.
 
 ## Scope (do)
 - Clerk integration: middleware protecting `app/(dashboard)/`; GitHub
-  OAuth as the ONLY sign-in method; default Clerk sign-in page.
+  OAuth as the ONLY sign-in method; custom DiffGuard sign-in/sign-up UI using
+  Clerk's `useSignIn` / `useSignUp` hooks and Clerk's OAuth callback handler.
 - getAccessibleInstallations(): Clerk user id → one-time GitHub App user
   authorization → encrypted access/refresh token in Upstash Redis →
   getUserInstallations (06) → installation ids; short-lived cache (~5 min)
