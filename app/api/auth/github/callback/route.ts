@@ -10,6 +10,14 @@ function failure(message: string, status: number) {
   );
 }
 
+function isSafeReturnPath(value: string) {
+  return (
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    !value.includes("\\")
+  );
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -31,5 +39,14 @@ export async function GET(request: Request) {
     return failure("GitHub authorization could not be completed.", 502);
   }
 
-  return NextResponse.redirect(new URL(pending.returnTo, request.url));
+  if (!isSafeReturnPath(pending.returnTo)) {
+    return failure("The authorization return path was invalid.", 400);
+  }
+
+  const destination = new URL(pending.returnTo, url.origin);
+  if (destination.origin !== url.origin) {
+    return failure("The authorization return path was invalid.", 400);
+  }
+
+  return NextResponse.redirect(destination);
 }

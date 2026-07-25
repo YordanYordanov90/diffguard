@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 import { SkipReasonBadge, StatusBadge } from "@/components/dashboard/status-badge";
 import {
@@ -77,10 +78,8 @@ export function ReviewDetailSheet({
               ) : null}
 
               {review.reviewMarkdown ? (
-                <article className="prose-invert max-w-none">
-                  <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-text-primary">
-                    {review.reviewMarkdown}
-                  </pre>
+                <article className="prose prose-invert max-w-none break-words text-sm leading-relaxed text-text-primary">
+                  <ReactMarkdown skipHtml>{review.reviewMarkdown}</ReactMarkdown>
                 </article>
               ) : (
                 <p className="text-sm text-text-muted">

@@ -20,11 +20,26 @@ type Cache = {
   set: (key: string, value: number[], options: { ex: number }) => Promise<unknown>;
 };
 
+export class GitHubAuthorizationRequiredError extends Error {
+  constructor() {
+    super("GitHub authorization is required.");
+    this.name = "GitHubAuthorizationRequiredError";
+  }
+}
+
 export type AccessibleInstallationDependencies = {
   getGithubToken: (userId: string) => Promise<string | null>;
   getUserInstallations: (token: string) => Promise<number[]>;
+  revokeGithubToken: (userId: string) => Promise<void>;
   cache: Cache;
 };
+
+function isGithubAuthenticationFailure(error: unknown) {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return false;
+  }
+  return error.status === 401;
+}
 
 function cacheKey(userId: string) {
   return `dashboard:installations:${userId}`;
@@ -42,9 +57,16 @@ export async function resolveAccessibleInstallations(
   const token = await dependencies.getGithubToken(userId);
   if (!token) return [];
 
-  const installationIds = installationIdsSchema.parse(
-    await dependencies.getUserInstallations(token),
-  );
+  let installationIds: number[];
+  try {
+    installationIds = installationIdsSchema.parse(
+      await dependencies.getUserInstallations(token),
+    );
+  } catch (error) {
+    if (!isGithubAuthenticationFailure(error)) throw error;
+    await dependencies.revokeGithubToken(userId);
+    throw new GitHubAuthorizationRequiredError();
+  }
   await dependencies.cache.set(cacheKey(userId), installationIds, {
     ex: CACHE_TTL_SECONDS,
   });
@@ -64,6 +86,7 @@ function createDefaultDependencies(): AccessibleInstallationDependencies {
   return {
     getGithubToken: (userId: string) => githubAppAuth().getAccessToken(userId),
     getUserInstallations,
+    revokeGithubToken: (userId: string) => githubAppAuth().revoke(userId),
     cache: {
       get: (key) => redis.get(key),
       set: (key, value, options) => redis.set(key, value, options),
@@ -91,8 +114,13 @@ export async function requireDashboardInstallations() {
     redirect("/api/auth/github/start?returnTo=%2Fdashboard");
   }
 
-  return resolveAccessibleInstallations(userId, {
-    ...dependencies,
-    getGithubToken: async () => token,
-  });
+  try {
+    return await resolveAccessibleInstallations(userId, {
+      ...dependencies,
+      getGithubToken: async () => token,
+    });
+  } catch (error) {
+    if (!(error instanceof GitHubAuthorizationRequiredError)) throw error;
+    redirect("/api/auth/github/start?returnTo=%2Fdashboard");
+  }
 }

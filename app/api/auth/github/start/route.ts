@@ -4,7 +4,11 @@ import { NextResponse } from "next/server";
 import { githubAppAuth } from "@/lib/auth/github-app";
 
 function isSafeReturnPath(value: string) {
-  return value.startsWith("/") && !value.startsWith("//");
+  return (
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    !value.includes("\\")
+  );
 }
 
 export async function GET(request: Request) {

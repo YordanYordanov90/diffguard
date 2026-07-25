@@ -27,7 +27,10 @@ const storedTokenSchema = z.object({
 const pendingStateSchema = z.object({
   userId: z.string().min(1),
   returnTo: z.string().refine(
-    (value) => value.startsWith("/") && !value.startsWith("//"),
+    (value) =>
+      value.startsWith("/") &&
+      !value.startsWith("//") &&
+      !value.includes("\\"),
     "Return path must be local to DiffGuard.",
   ),
 });
@@ -93,6 +96,7 @@ export function createGitHubAppAuth(input?: {
   const store = input?.store ?? storeFromEnvironment();
   const fetcher = input?.fetcher ?? fetch;
   const now = input?.now ?? Date.now;
+  const tokenLocks = new Map<string, Promise<string | null>>();
 
   async function exchangeToken(body: URLSearchParams) {
     const response = await fetcher("https://github.com/login/oauth/access_token", {
@@ -128,7 +132,7 @@ export function createGitHubAppAuth(input?: {
     });
   }
 
-  async function getAccessToken(userId: string): Promise<string | null> {
+  async function readAccessToken(userId: string): Promise<string | null> {
     const parsed = storedTokenSchema.safeParse(await store.get(tokenKey(userId)));
     if (!parsed.success) {
       await store.delete(tokenKey(userId));
@@ -178,6 +182,19 @@ export function createGitHubAppAuth(input?: {
     } catch {
       await store.delete(tokenKey(userId));
       return null;
+    }
+  }
+
+  async function getAccessToken(userId: string): Promise<string | null> {
+    const active = tokenLocks.get(userId);
+    if (active) return active;
+
+    const operation = readAccessToken(userId);
+    tokenLocks.set(userId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (tokenLocks.get(userId) === operation) tokenLocks.delete(userId);
     }
   }
 

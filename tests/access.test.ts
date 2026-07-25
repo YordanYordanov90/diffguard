@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveAccessibleInstallations } from "@/lib/auth/access";
+import {
+  GitHubAuthorizationRequiredError,
+  resolveAccessibleInstallations,
+} from "@/lib/auth/access";
 
 function dependencies(cached: unknown = null) {
   return {
     getGithubToken: vi.fn(async () => "github-token"),
     getUserInstallations: vi.fn(async () => [123, 456]),
+    revokeGithubToken: vi.fn(async () => undefined),
     cache: {
       get: vi.fn(async () => cached),
       set: vi.fn(async () => undefined),
@@ -42,5 +46,15 @@ describe("resolveAccessibleInstallations", () => {
     await expect(resolveAccessibleInstallations("user_1", deps)).resolves.toEqual([]);
     expect(deps.getUserInstallations).not.toHaveBeenCalled();
     expect(deps.cache.set).not.toHaveBeenCalled();
+  });
+
+  it("revokes rejected credentials and asks the caller to reauthorize", async () => {
+    const deps = dependencies();
+    deps.getUserInstallations.mockRejectedValue({ status: 401 });
+
+    await expect(resolveAccessibleInstallations("user_1", deps)).rejects.toBeInstanceOf(
+      GitHubAuthorizationRequiredError,
+    );
+    expect(deps.revokeGithubToken).toHaveBeenCalledWith("user_1");
   });
 });

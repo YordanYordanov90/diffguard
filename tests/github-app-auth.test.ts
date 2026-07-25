@@ -76,4 +76,38 @@ describe("GitHub App authorization", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("serializes concurrent refreshes for the same user", async () => {
+    let currentTime = 0;
+    const dependencies = store();
+    let exchangeCount = 0;
+    const fetcher = vi.fn(async () => {
+      exchangeCount += 1;
+      return new Response(
+        JSON.stringify({
+          access_token: exchangeCount === 1 ? "access-secret" : "refreshed-secret",
+          token_type: "bearer",
+          scope: "",
+          refresh_token: "refresh-secret",
+          expires_in: 3600,
+          refresh_token_expires_in: 3600,
+        }),
+        { status: 200 },
+      );
+    });
+    const auth = createGitHubAppAuth({
+      config,
+      store: dependencies,
+      fetcher,
+      now: () => currentTime,
+    });
+
+    await auth.authorizeCode("user_123", "auth-code");
+    currentTime = 3_550_000;
+    await expect(Promise.all([
+      auth.getAccessToken("user_123"),
+      auth.getAccessToken("user_123"),
+    ])).resolves.toEqual(["refreshed-secret", "refreshed-secret"]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });
