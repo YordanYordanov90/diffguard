@@ -30,8 +30,10 @@ with a multi-tenant foundation that can scale later.
    a review job.
 4. The worker fetches the diff, builds context, calls the LLM, and posts
    (or edits in place) one summary comment on the PR.
-5. User signs into the dashboard with GitHub (Clerk) and sees the review
-   history for installations they can access — and only those.
+5. User signs into the dashboard with GitHub (Clerk) and sees an operations
+   workspace for installations GitHub says they can access — and only those.
+   The workspace shows repository coverage, recent activity, and review
+   history. Repository permission changes always return to GitHub.
 
 ## Features
 
@@ -47,18 +49,27 @@ with a multi-tenant foundation that can scale later.
   disclosure of skipped files
 - Per-installation rate limit and hardcoded daily review cap
 
-### Minimal Dashboard (Phase 1, read-only)
+### Dashboard Foundation (Phase 1, complete)
 
 - Clerk sign-in via GitHub OAuth only
 - Reviews table: repo, PR link, status badge, findings count, model,
   duration, timestamp; light polling refresh
 - Review detail view: stored review markdown + error text on failure
 
-### Beta Expansion (Phase 2)
+### Dashboard Operations Expansion (next)
+
+- Responsive left-sidebar workspace with Overview, Reviews, and Repositories
+- Coverage-first overview grouped by GitHub installation/account
+- Repository inventory with access mode, latest review state, and a secure
+  `Manage on GitHub` path
+- GitHub remains the repository-selection source of truth; DiffGuard never
+  grants itself repository access
+
+### Review Quality Expansion (Phase 2)
 
 - Inline review comments (file/line) reusing the structured findings
 - Full-file "smart context" fetching to reduce false positives
-- Onboarding polish (GitHub App Setup URL redirect)
+- Additional onboarding polish after dashboard dogfooding
 
 ### Later (Phase 3 — out of MVP)
 
@@ -72,8 +83,8 @@ with a multi-tenant foundation that can scale later.
 
 - One Next.js app on Vercel: webhook route, worker route, dashboard
 - Multi-tenant data model keyed on GitHub installation from day one
-- Two environments: dev GitHub App + dev deployment + Neon dev branch;
-  prod equivalents
+- One GitHub App, Vercel project, and Neon database promoted in place from
+  scratch-repository verification to real-repository use
 - Storing review output and structured findings metadata
 
 ### Out of Scope
@@ -88,10 +99,12 @@ with a multi-tenant foundation that can scale later.
 1. Opening a PR on an enabled repo results in exactly one DiffGuard
    summary comment, updated in place on subsequent pushes.
 2. A second user installing the app sees only their own installations,
-   repos, and reviews in the dashboard.
+   repositories, coverage state, and reviews in the dashboard.
 3. A burst of pushes to one PR produces one review (debounce + head-SHA
    check), and a failed job never posts a malformed comment.
 4. Daily LLM spend is bounded by the per-installation cap regardless of
    user behavior.
-5. `npm run build` passes and the pipeline runs end to end on the dev
-   environment before the prod app is installed on real repos.
+5. `npm run build` passes and the pipeline runs end to end on the scratch
+   repository before the same App is installed on real repositories.
+6. The dashboard accurately reflects `All repositories` versus
+   `Selected repositories` and sends every permission change to GitHub.
