@@ -4,6 +4,9 @@ import {
   formatDuration,
   formatSkipReason,
   githubPrUrl,
+  githubRepoUrl,
+  isRepositoryFullName,
+  reviewsFilterHref,
   shortSha,
   toDashboardReview,
 } from "@/lib/dashboard/format";
@@ -63,5 +66,16 @@ describe("dashboard format helpers", () => {
     expect(githubPrUrl("acme/app", 7)).toBe("https://github.com/acme/app/pull/7");
     expect(shortSha("abcdef0123456789")).toBe("abcdef0");
     expect(formatSkipReason("daily_cap")).toBe("daily cap");
+  });
+
+  it("only builds github.com repository links for safe owner/repo names", () => {
+    expect(isRepositoryFullName("acme/app")).toBe(true);
+    expect(isRepositoryFullName("acme/app/extra")).toBe(false);
+    expect(isRepositoryFullName("https://evil.example/x")).toBe(false);
+    expect(githubRepoUrl("acme/app")).toBe("https://github.com/acme/app");
+    expect(githubRepoUrl("../etc/passwd")).toBeNull();
+    expect(reviewsFilterHref("acme/app")).toBe(
+      "/dashboard/reviews?repository=acme%2Fapp",
+    );
   });
 });

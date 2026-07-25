@@ -216,3 +216,35 @@ export function buildOverviewModel(input: {
     recentReviews: input.recentReviews,
   };
 }
+
+/**
+ * Client-side search over already-authorized coverage rows.
+ * Matches account login (whole group) or repository full names.
+ */
+export function filterCoverageGroups(
+  groups: InstallationCoverageGroup[],
+  query: string,
+): InstallationCoverageGroup[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return groups;
+
+  return groups.flatMap((group) => {
+    if (group.accountLogin.toLowerCase().includes(normalized)) {
+      return [group];
+    }
+
+    const repositories = group.repositories.filter((repository) =>
+      repository.fullName.toLowerCase().includes(normalized),
+    );
+    if (repositories.length === 0) return [];
+
+    return [
+      {
+        ...group,
+        repositories,
+        repositoryCount: repositories.length,
+        attentionCount: repositories.filter((row) => row.attention).length,
+      },
+    ];
+  });
+}

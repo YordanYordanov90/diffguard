@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { GitPullRequest, LayoutDashboard, Menu, Shield } from "lucide-react";
+import {
+  FolderGit2,
+  GitPullRequest,
+  LayoutDashboard,
+  Menu,
+  Shield,
+} from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +26,7 @@ import { cn } from "@/lib/utils";
 const navigation = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/reviews", label: "Reviews", icon: GitPullRequest },
+  { href: "/dashboard/repositories", label: "Repositories", icon: FolderGit2 },
 ] as const;
 
 function isActivePath(pathname: string, href: string) {
