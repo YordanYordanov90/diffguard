@@ -132,13 +132,18 @@ Update this file after every meaningful implementation change.
   and resolve installations through GitHub's `/user/installations` endpoint.
   A five-minute cache is keyed by Clerk user id; missing or expired access
   redirects to reauthorization and installation IDs are never trusted from
-  client input. Focused auth tests, lint, the full 72-test Vitest suite, and
+  client input. Focused auth tests, lint, the full 75-test Vitest suite, and
   the production build pass.
+- Dashboard onboarding polish — completed 2026-07-25: GitHub authorization is
+  now an explicit dashboard action rather than an immediate redirect. A second
+  dashboard state links users to GitHub's App installation screen to choose
+  repositories, then explains how to trigger their first PR review. The App
+  slug is configurable through `GITHUB_APP_SLUG` (default `diffguard-dev`).
 - Feature 17 (Dashboard UI) — completed 2026-07-25:
   Read-only reviews table (repo mono, GitHub PR link, status badge, findings
   count, model, duration, timestamp) with ~5s polling + manual refresh;
   detail sheet for markdown body, failed error callout, and skipped-reason
-  badge. Data loads only through `requireDashboardInstallations` →
+  badge. Data loads only through GitHub-derived dashboard access →
   `listReviews` (no client-supplied installation IDs). shadcn table/badge/
   sheet/button/skeleton added and mapped to DiffGuard tokens. Format helper
   unit tests, full Vitest suite (67), lint, and production build pass.
@@ -198,8 +203,9 @@ Update this file after every meaningful implementation change.
   scratch repo first, then install the same app on real repos when
   ready; promote by updating env vars/secrets in place, not by
   standing up a second app. Pure core unit-tested locally regardless.
-- Dashboard: minimal read-only, ships in Phase 1 as debug window; scope
-  fence — only "did my PR go through and what happened".
+- Dashboard: minimal read-only operations view with a two-step GitHub
+  onboarding state. GitHub owns the final App-installation repository picker;
+  DiffGuard links to it but never chooses repositories for the user.
 - `schemas.md` added as seventh context file; updated in the same
   increment as any shape change.
 

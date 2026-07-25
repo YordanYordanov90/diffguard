@@ -12,6 +12,8 @@ One typed, validated source for all env vars and tunable constants.
   Clerk keys, ANTHROPIC_API_KEY / OPENAI_API_KEY (both optional).
 - Required GitHub App OAuth vars: client ID, client secret, exact callback URL,
   and a 32-byte base64 encryption key for encrypted Redis token storage.
+- Optional GitHub App slug (`GITHUB_APP_SLUG`, default `diffguard-dev`) for
+  the dashboard's repository-install link.
 - Constants file: DEBOUNCE_SECONDS (75), DAILY_REVIEW_CAP,
   RATE_LIMIT (events/min per installation), DIFF_TOKEN_BUDGET (~55k),
   INSTRUCTIONS_TOKEN_CAP (~2k), LLM_TIMEOUT_MS (120000), DEFAULT_MODEL.

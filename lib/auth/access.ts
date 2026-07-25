@@ -27,6 +27,10 @@ export class GitHubAuthorizationRequiredError extends Error {
   }
 }
 
+export type DashboardAccess =
+  | { status: "github-authorization-required" }
+  | { status: "ready"; installationIds: number[] };
+
 export type AccessibleInstallationDependencies = {
   getGithubToken: (userId: string) => Promise<string | null>;
   getUserInstallations: (token: string) => Promise<number[]>;
@@ -103,24 +107,33 @@ export async function getAccessibleInstallations() {
   return resolveAccessibleInstallations(userId, defaultDependencies);
 }
 
-export async function requireDashboardInstallations() {
+export async function getDashboardAccess(): Promise<DashboardAccess> {
   await auth.protect();
   const { userId } = await auth();
-  if (!userId) return [];
+  if (!userId) return { status: "github-authorization-required" };
 
   const dependencies = defaultDependencies ??= createDefaultDependencies();
   const token = await dependencies.getGithubToken(userId);
-  if (!token) {
-    redirect("/api/auth/github/start?returnTo=%2Fdashboard");
-  }
+  if (!token) return { status: "github-authorization-required" };
 
   try {
-    return await resolveAccessibleInstallations(userId, {
+    const installationIds = await resolveAccessibleInstallations(userId, {
       ...dependencies,
       getGithubToken: async () => token,
     });
+    return { status: "ready", installationIds };
   } catch (error) {
-    if (!(error instanceof GitHubAuthorizationRequiredError)) throw error;
+    if (error instanceof GitHubAuthorizationRequiredError) {
+      return { status: "github-authorization-required" };
+    }
+    throw error;
+  }
+}
+
+export async function requireDashboardInstallations() {
+  const access = await getDashboardAccess();
+  if (access.status === "github-authorization-required") {
     redirect("/api/auth/github/start?returnTo=%2Fdashboard");
   }
+  return access.installationIds;
 }
