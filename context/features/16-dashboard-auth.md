@@ -14,11 +14,15 @@ says they may access. No UI beyond Clerk's own components.
   authorization → encrypted access/refresh token in Upstash Redis →
   getUserInstallations (06) → installation ids; short-lived cache (~5 min)
   keyed by user id.
-- First dashboard access redirects through the DiffGuard GitHub App OAuth
-  authorization flow. The callback validates a one-time state record bound to
-  the Clerk user, exchanges the code, and stores encrypted tokens. Access
-  tokens refresh automatically; revoked/expired authorization requests a new
-  authorization.
+- Dashboard onboarding presents GitHub authorization and repository setup as
+  explicit actions. It does not redirect a newly signed-in user without an
+  explanation. The callback validates a one-time state record bound to the
+  Clerk user, exchanges the code, and stores encrypted tokens. Access tokens
+  refresh automatically; revoked/expired authorization returns to the
+  dashboard connection step.
+- Repository selection remains on GitHub's secure GitHub App install page,
+  linked from the dashboard onboarding state. DiffGuard cannot select a
+  user's repositories on their behalf.
 - Server-side guard helper used by every dashboard read: resolves ids and
   passes them to listReviews/getReviewDetail. installation_id is NEVER
   read from params, query strings, or client state.

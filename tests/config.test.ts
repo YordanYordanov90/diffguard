@@ -13,6 +13,7 @@ const validEnv = {
   GITHUB_APP_ID: "123456",
   GITHUB_APP_CLIENT_ID: "Iv1.example",
   GITHUB_APP_CLIENT_SECRET: "github-client-secret",
+  GITHUB_APP_SLUG: "diffguard-dev",
   GITHUB_APP_OAUTH_REDIRECT_URI: "https://diffguard.example.com/api/auth/github/callback",
   GITHUB_APP_PRIVATE_KEY_BASE64: "cHJpdmF0ZS1rZXk=",
   GITHUB_WEBHOOK_SECRET: "webhook-secret",
