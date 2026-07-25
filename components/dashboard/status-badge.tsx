@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Clock3, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -16,10 +16,8 @@ const statusStyles: Record<ReviewStatus, string> = {
     "border-state-warning/30 bg-state-warning/10 text-state-warning",
 };
 
-const inProgressStatuses = new Set<ReviewStatus>(["queued", "running"]);
-
 export function StatusBadge({ status }: { status: ReviewStatus }) {
-  const showSpinner = inProgressStatuses.has(status);
+  const showSpinner = status === "running";
 
   return (
     <Badge
@@ -30,7 +28,12 @@ export function StatusBadge({ status }: { status: ReviewStatus }) {
       )}
     >
       {showSpinner ? (
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+        <Loader2
+          className="motion-safe:animate-spin h-3 w-3 shrink-0"
+          aria-hidden
+        />
+      ) : status === "queued" ? (
+        <Clock3 className="h-3 w-3 shrink-0" aria-hidden />
       ) : null}
       {status}
     </Badge>

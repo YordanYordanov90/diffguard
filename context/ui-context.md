@@ -49,6 +49,11 @@ decoration. Status badge mapping: `completed` → success, `failed` → error,
 `running` → info, `queued` → muted, `skipped` → warning. Severity mapping:
 critical/high → error, medium → warning, low/info → muted.
 
+In-progress status treatment keeps the text label visible at all times:
+`queued` uses a static clock icon; `running` may use a `motion-safe`
+spinner to communicate active processing and becomes static when reduced
+motion is preferred.
+
 ## Typography
 
 | Role      | Font       | Variable      |
@@ -225,7 +230,7 @@ include ExternalLink and visible text.
 - Meet WCAG AA contrast for text and interactive states.
 - Respect `prefers-reduced-motion`.
 - Motion is limited to Sheet transitions, brief skeleton-to-content
-  replacement, and subtle state changes. No ambient animation or pulsing
-  status indicators.
+  replacement, subtle state changes, and a motion-safe spinner for an actively
+  `running` review. Do not animate queued status or use pulsing indicators.
 - Verify at 320px, tablet, and wide desktop widths. Long repository names
   truncate visually but remain available through accessible text/tooltip.
