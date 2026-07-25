@@ -15,12 +15,14 @@ workspace with stable navigation and clear page hierarchy.
   - a persistent left sidebar on desktop;
   - a compact top bar and shadcn Sheet navigation on mobile;
   - a flexible main content area with a readable maximum width.
-- Primary navigation contains only implemented destinations:
-  `Overview`, `Reviews`, and `Repositories`.
+- Primary navigation contains only implemented destinations in this
+  increment: `Overview` and `Reviews`. Feature 20 adds `Repositories` only
+  once its route exists.
 - Routes:
   - `/dashboard` → overview;
   - `/dashboard/reviews` → the existing Feature 17 reviews experience;
-  - `/dashboard/repositories` → repository coverage from Feature 20.
+  - `/dashboard/repositories` is introduced by Feature 20 and is not linked
+    before that feature is implemented.
 - Keep the shield mark and DiffGuard wordmark at the top. Keep the Clerk
   user control anchored at the bottom of the desktop sidebar and in the
   mobile top bar.

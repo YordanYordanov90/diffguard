@@ -159,6 +159,12 @@ Update this file after every meaningful implementation change.
   and repository inventory. The architecture, GitHub access contract, UI
   vocabulary, responsive behavior, security boundary, and progress plan are
   synchronized across `context/`. No application code changed.
+- Feature 18 (Dashboard shell & navigation) — completed 2026-07-25:
+  responsive desktop sidebar, mobile Sheet navigation, active route state,
+  focused onboarding header, stable `/dashboard/reviews` route, and a
+  lightweight Overview landing page using existing review data. Repository
+  navigation is intentionally deferred until Feature 20 creates its route.
+  Lint, all 75 tests, and the production build pass.
 
 ## In Progress
 
@@ -166,13 +172,13 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-1. Feature 18 — responsive dashboard shell and navigation.
-2. Feature 19 — shared tenant-scoped coverage read model and coverage-first
+1. Feature 19 — shared tenant-scoped coverage read model and coverage-first
    overview.
-3. Feature 20 — full repository coverage page and GitHub management flow.
-4. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
+2. Feature 20 — full repository coverage page, navigation item, and GitHub
+   management flow.
+3. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
    dashboard, then invite 4–5 beta users.
-5. Later Phase 2 candidates: inline comments and full-file context.
+4. Later Phase 2 candidates: inline comments and full-file context.
 
 ## Open Questions
 
