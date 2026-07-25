@@ -52,6 +52,20 @@ export type ReviewTriggerResult =
   | { status: "skipped"; reason: SkipReason }
   | { status: "queued" };
 
+export function getReviewWorkerUrl(
+  environment: Pick<
+    NodeJS.ProcessEnv,
+    "VERCEL_ENV" | "VERCEL_PROJECT_PRODUCTION_URL" | "VERCEL_URL"
+  > = process.env,
+) {
+  const host =
+    environment.VERCEL_ENV === "production"
+      ? environment.VERCEL_PROJECT_PRODUCTION_URL ?? environment.VERCEL_URL
+      : environment.VERCEL_URL;
+  const baseUrl = host ? `https://${host}` : "http://localhost:3000";
+  return `${baseUrl}/api/jobs/review`;
+}
+
 function createDefaultDependencies(): ReviewTriggerDependencies {
   const env = parseEnv();
   const redis = new Redis({
@@ -59,9 +73,6 @@ function createDefaultDependencies(): ReviewTriggerDependencies {
     token: env.UPSTASH_REDIS_REST_TOKEN,
   });
   const qstash = new Client({ token: env.QSTASH_TOKEN });
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000";
 
   return {
     queries: {
@@ -93,7 +104,7 @@ function createDefaultDependencies(): ReviewTriggerDependencies {
     qstash: {
       publishJSON: (request) => qstash.publishJSON(request),
     },
-    reviewWorkerUrl: `${baseUrl}/api/jobs/review`,
+    reviewWorkerUrl: getReviewWorkerUrl(),
   };
 }
 
