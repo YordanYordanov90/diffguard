@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   GitHubAuthorizationRequiredError,
+  invalidateInstallationAccessCache,
   resolveAccessibleInstallations,
 } from "@/lib/auth/access";
 import type { AccessibleInstallation } from "@/lib/github/accessible-installation";
@@ -31,6 +32,7 @@ function dependencies(cached: unknown = null) {
     cache: {
       get: vi.fn(async () => cached),
       set: vi.fn(async () => undefined),
+      del: vi.fn(async () => undefined),
     },
   };
 }
@@ -88,5 +90,22 @@ describe("resolveAccessibleInstallations", () => {
       GitHubAuthorizationRequiredError,
     );
     expect(deps.revokeGithubToken).toHaveBeenCalledWith("user_1");
+  });
+
+  it("bypasses the cache when refresh is requested after Manage on GitHub", async () => {
+    const deps = dependencies(sampleInstallations);
+
+    await expect(
+      resolveAccessibleInstallations("user_1", deps, { bypassCache: true }),
+    ).resolves.toEqual(sampleInstallations);
+    expect(deps.cache.get).not.toHaveBeenCalled();
+    expect(deps.getUserInstallations).toHaveBeenCalledWith("github-token");
+    expect(deps.cache.set).toHaveBeenCalled();
+  });
+
+  it("invalidates the installation-access cache key for a user", async () => {
+    const deps = dependencies();
+    await invalidateInstallationAccessCache("user_1", deps.cache);
+    expect(deps.cache.del).toHaveBeenCalledWith("dashboard:installations:user_1");
   });
 });

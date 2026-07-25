@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOverviewModel,
   deriveRepositoryCoverage,
+  filterCoverageGroups,
   formatCoverageDetail,
   formatRelativeTime,
   repositorySelectionLabel,
@@ -237,5 +238,27 @@ describe("dashboard coverage read model", () => {
     expect(model.groups[0]?.installationId).toBe(10);
     // Repo for installation 20 is ignored because that installation was not authorized.
     expect(model.summary.repositoryCount).toBe(3);
+  });
+
+  it("filters already-authorized coverage rows by account or repository name", () => {
+    const model = buildOverviewModel({
+      installations,
+      repositories,
+      latestReviews: [],
+      reviewsToday: 0,
+      recentReviews: [],
+    });
+
+    const byRepo = filterCoverageGroups(model.groups, "weather");
+    expect(byRepo).toHaveLength(1);
+    expect(byRepo[0]?.repositories.map((r) => r.fullName)).toEqual([
+      "YordanYordanov90/weather-app",
+    ]);
+
+    const byAccount = filterCoverageGroups(model.groups, "example-org");
+    expect(byAccount).toHaveLength(1);
+    expect(byAccount[0]?.repositoryCount).toBe(1);
+
+    expect(filterCoverageGroups(model.groups, "nope")).toEqual([]);
   });
 });

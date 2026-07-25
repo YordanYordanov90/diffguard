@@ -49,8 +49,30 @@ export function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
 
+/** GitHub repository full_name must be a single owner/repo segment pair. */
+const REPOSITORY_FULL_NAME =
+  /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+export function isRepositoryFullName(value: string): boolean {
+  return REPOSITORY_FULL_NAME.test(value);
+}
+
 export function githubPrUrl(repositoryName: string, prNumber: number): string {
   return `https://github.com/${repositoryName}/pull/${prNumber}`;
+}
+
+/**
+ * Build a repository URL only for safe owner/repo names. Returns null when
+ * the name is not a single path segment pair (never open unvalidated links).
+ */
+export function githubRepoUrl(repositoryName: string): string | null {
+  if (!isRepositoryFullName(repositoryName)) return null;
+  return `https://github.com/${repositoryName}`;
+}
+
+export function reviewsFilterHref(repositoryFullName: string): string {
+  const params = new URLSearchParams({ repository: repositoryFullName });
+  return `/dashboard/reviews?${params.toString()}`;
 }
 
 export function formatSkipReason(reason: string): string {

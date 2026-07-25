@@ -5,12 +5,12 @@ Update this file after every meaningful implementation change.
 ## Current Phase
 
 - Phase 1 core pipeline and dashboard foundation are complete.
-- Dashboard operations expansion: Features 18–19 implemented; Feature 20 next.
+- Dashboard operations expansion (Features 18–20) is implemented.
 
 ## Current Goal
 
-- Implement Feature 20 (repository coverage page), then dogfood the expanded
-  dashboard on real repositories before inviting 4–5 beta users.
+- Install `diffguard-dev` on the owner's real repositories, dogfood the
+  expanded dashboard, then invite 4–5 beta users.
 
 ## Completed
 
@@ -172,6 +172,14 @@ Update this file after every meaningful implementation change.
   rail, restrained summary totals, recent reviews with existing detail sheet
   behavior, and directed empty/error states. Installation scope remains
   GitHub-derived only. Lint, all 85 Vitest tests, and production build pass.
+- Feature 20 (Repository coverage) — completed 2026-07-25:
+  `/dashboard/repositories` groups authorized repos by installation with
+  access mode, suspended/active state, coverage labels, `Manage on GitHub`
+  (validated `html_url`), `View reviews`, and `Open on GitHub`. Client-side
+  search, stable attention-first sorting, cache-invalidating Refresh, and a
+  server-side allowlisted repository filter on `/dashboard/reviews` are
+  included. Navigation now links Overview, Reviews, and Repositories. Lint,
+  full Vitest suite, and production build pass.
 
 ## In Progress
 
@@ -179,11 +187,9 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-1. Feature 20 — full repository coverage page, navigation item, and GitHub
-   management flow (reuses Feature 19 coverage read model).
-2. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
+1. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
    dashboard, then invite 4–5 beta users.
-3. Later Phase 2 candidates: inline comments and full-file context.
+2. Later Phase 2 candidates: inline comments and full-file context.
 
 ## Open Questions
 

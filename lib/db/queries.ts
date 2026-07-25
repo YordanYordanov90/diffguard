@@ -399,9 +399,15 @@ export async function countReviewsToday(
 export async function listReviews(
   installationIds: number[],
   limit: number,
+  options: { repositoryId?: number } = {},
   database: Database = defaultDb,
 ) {
   if (installationIds.length === 0 || limit <= 0) return [];
+
+  const conditions = [inArray(reviews.installationId, installationIds)];
+  if (options.repositoryId !== undefined) {
+    conditions.push(eq(reviews.repositoryId, options.repositoryId));
+  }
 
   return database
     .select({ review: reviews, repositoryName: repositories.fullName })
@@ -413,9 +419,38 @@ export async function listReviews(
         eq(repositories.installationId, reviews.installationId),
       ),
     )
-    .where(inArray(reviews.installationId, installationIds))
+    .where(and(...conditions))
     .orderBy(desc(reviews.createdAt))
     .limit(limit);
+}
+
+/**
+ * Confirm a repository belongs to the GitHub-derived installation allowlist
+ * before applying a dashboard filter. Never trust client-supplied IDs alone.
+ */
+export async function findAuthorizedRepository(
+  installationIds: number[],
+  fullName: string,
+  database: Database = defaultDb,
+) {
+  if (installationIds.length === 0 || fullName.length === 0) return null;
+
+  const [repository] = await database
+    .select({
+      id: repositories.id,
+      fullName: repositories.fullName,
+      installationId: repositories.installationId,
+    })
+    .from(repositories)
+    .where(
+      and(
+        inArray(repositories.installationId, installationIds),
+        eq(repositories.fullName, fullName),
+      ),
+    )
+    .limit(1);
+
+  return repository ?? null;
 }
 
 /**

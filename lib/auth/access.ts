@@ -25,6 +25,12 @@ type Cache = {
     value: AccessibleInstallation[],
     options: { ex: number },
   ) => Promise<unknown>;
+  del: (key: string) => Promise<unknown>;
+};
+
+export type ResolveInstallationsOptions = {
+  /** Skip the short-lived cache and force a GitHub round-trip. */
+  bypassCache?: boolean;
 };
 
 export class GitHubAuthorizationRequiredError extends Error {
@@ -76,11 +82,14 @@ function toAccess(installations: AccessibleInstallation[]): Extract<
 export async function resolveAccessibleInstallations(
   userId: string,
   dependencies: AccessibleInstallationDependencies,
+  options: ResolveInstallationsOptions = {},
 ): Promise<AccessibleInstallation[]> {
-  const cached = accessibleInstallationsSchema.safeParse(
-    await dependencies.cache.get(cacheKey(userId)),
-  );
-  if (cached.success) return cached.data;
+  if (!options.bypassCache) {
+    const cached = accessibleInstallationsSchema.safeParse(
+      await dependencies.cache.get(cacheKey(userId)),
+    );
+    if (cached.success) return cached.data;
+  }
 
   const token = await dependencies.getGithubToken(userId);
   if (!token) return [];
@@ -101,6 +110,16 @@ export async function resolveAccessibleInstallations(
   return installations;
 }
 
+/** Drop the short-lived installation descriptor cache for a Clerk user. */
+export async function invalidateInstallationAccessCache(
+  userId: string,
+  cache?: Pick<Cache, "del">,
+) {
+  const target =
+    cache ?? (defaultDependencies ??= createDefaultDependencies()).cache;
+  await target.del(cacheKey(userId));
+}
+
 function createDefaultDependencies(): AccessibleInstallationDependencies {
   const env = dashboardCacheEnvSchema.parse({
     UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
@@ -118,20 +137,25 @@ function createDefaultDependencies(): AccessibleInstallationDependencies {
     cache: {
       get: (key) => redis.get(key),
       set: (key, value, options) => redis.set(key, value, options),
+      del: (key) => redis.del(key),
     },
   };
 }
 
 let defaultDependencies: AccessibleInstallationDependencies | undefined;
 
-export async function getAccessibleInstallations() {
+export async function getAccessibleInstallations(
+  options: ResolveInstallationsOptions = {},
+) {
   const { userId } = await auth();
   if (!userId) return [];
   defaultDependencies ??= createDefaultDependencies();
-  return resolveAccessibleInstallations(userId, defaultDependencies);
+  return resolveAccessibleInstallations(userId, defaultDependencies, options);
 }
 
-export async function getDashboardAccess(): Promise<DashboardAccess> {
+export async function getDashboardAccess(
+  options: ResolveInstallationsOptions = {},
+): Promise<DashboardAccess> {
   await auth.protect();
   const { userId } = await auth();
   if (!userId) return { status: "github-authorization-required" };
@@ -141,10 +165,14 @@ export async function getDashboardAccess(): Promise<DashboardAccess> {
   if (!token) return { status: "github-authorization-required" };
 
   try {
-    const installations = await resolveAccessibleInstallations(userId, {
-      ...dependencies,
-      getGithubToken: async () => token,
-    });
+    const installations = await resolveAccessibleInstallations(
+      userId,
+      {
+        ...dependencies,
+        getGithubToken: async () => token,
+      },
+      options,
+    );
     return toAccess(installations);
   } catch (error) {
     if (error instanceof GitHubAuthorizationRequiredError) {
