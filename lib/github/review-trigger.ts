@@ -53,9 +53,15 @@ export type ReviewTriggerResult =
   | { status: "queued" };
 
 export function getReviewWorkerUrl(
-  environment: Pick<NodeJS.ProcessEnv, "VERCEL_PROJECT_PRODUCTION_URL" | "VERCEL_URL"> = process.env,
+  environment: Pick<
+    NodeJS.ProcessEnv,
+    "VERCEL_ENV" | "VERCEL_PROJECT_PRODUCTION_URL" | "VERCEL_URL"
+  > = process.env,
 ) {
-  const host = environment.VERCEL_PROJECT_PRODUCTION_URL ?? environment.VERCEL_URL;
+  const host =
+    environment.VERCEL_ENV === "production"
+      ? environment.VERCEL_PROJECT_PRODUCTION_URL ?? environment.VERCEL_URL
+      : environment.VERCEL_URL;
   const baseUrl = host ? `https://${host}` : "http://localhost:3000";
   return `${baseUrl}/api/jobs/review`;
 }
