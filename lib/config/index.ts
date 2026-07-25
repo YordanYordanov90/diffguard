@@ -7,7 +7,7 @@ export {
   LLM_TIMEOUT_MS,
   RATE_LIMIT,
 } from "./constants";
-export { env } from "./runtime";
+export { env, getEnv } from "./runtime";
 export { envSchema, parseEnv, type Env } from "./env";
 export {
   ConfigurationError,

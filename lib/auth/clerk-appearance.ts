@@ -41,7 +41,7 @@ export const clerkAppearance = {
     headerTitle: "hidden",
     headerSubtitle: "hidden",
     socialButtonsBlockButton:
-      "bg-[#0a0a0b]/80 !border-2 !border-[#f4f4f5]/80 text-[#f4f4f5] rounded-md shadow-none hover:bg-[#1c1c1f] hover:!border-[#f4f4f5] focus-visible:ring-2 focus-visible:ring-[#22c55e]/50 transition-colors h-12",
+      "bg-[#0a0a0b]/80 !border !border-[#f4f4f5]/80 text-[#f4f4f5] rounded-md shadow-none hover:bg-[#1c1c1f] hover:!border-[#f4f4f5] focus-visible:ring-2 focus-visible:ring-[#22c55e]/50 transition-colors h-12",
     socialButtonsBlockButtonText: "text-[#f4f4f5] font-medium tracking-tight",
     socialButtonsProviderIcon: "brightness-0 invert",
     dividerLine: "bg-[#27272a]",

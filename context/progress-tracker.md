@@ -4,13 +4,12 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Phase 1 implementation — database foundation complete; webhook boundaries
-  are next.
+- Phase 1 complete for the core pipeline + minimal dashboard. Dogfood and
+  beta invite remain.
 
 ## Current Goal
 
-- Phase 1: working review pipeline on the dev environment + minimal
-  read-only dashboard.
+- Install on real repos, dogfood, then invite 4–5 beta users.
 
 ## Completed
 
@@ -127,12 +126,22 @@ Update this file after every meaningful implementation change.
   detection, and the final PR comment all passed. A second push reused the
   same GitHub comment ID, confirming edit-in-place behavior.
 - Feature 16 (Dashboard auth & access resolution) — completed 2026-07-25:
-  Clerk is linked to the DiffGuard app with GitHub OAuth sign-in routes,
-  protected dashboard middleware/layout, shadcn-themed provider controls, and
-  a five-minute Upstash cache for GitHub-derived installation access. Access
-  resolution returns an empty set when no GitHub OAuth token is available and
-  never trusts installation IDs from client input. Focused auth tests, lint,
-  full Vitest suite, Clerk Doctor, and production build pass.
+  Clerk is linked to the DiffGuard app for identity, then the dashboard starts
+  a one-time GitHub App user authorization when needed. Access and refresh
+  tokens are AES-256-GCM encrypted in Upstash Redis, refresh automatically,
+  and resolve installations through GitHub's `/user/installations` endpoint.
+  A five-minute cache is keyed by Clerk user id; missing or expired access
+  redirects to reauthorization and installation IDs are never trusted from
+  client input. Focused auth tests, lint, the full 72-test Vitest suite, and
+  the production build pass.
+- Feature 17 (Dashboard UI) — completed 2026-07-25:
+  Read-only reviews table (repo mono, GitHub PR link, status badge, findings
+  count, model, duration, timestamp) with ~5s polling + manual refresh;
+  detail sheet for markdown body, failed error callout, and skipped-reason
+  badge. Data loads only through `requireDashboardInstallations` →
+  `listReviews` (no client-supplied installation IDs). shadcn table/badge/
+  sheet/button/skeleton added and mapped to DiffGuard tokens. Format helper
+  unit tests, full Vitest suite (67), lint, and production build pass.
 
 ## In Progress
 
@@ -140,22 +149,10 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-1. ~~Register `diffguard-dev` GitHub App~~ — done 2026-07-19 (permissions:
-   PR RW, Contents RO, Metadata RO; events: pull_request, plus
-   installation/installation_repositories which are delivered
-   automatically). Private key generated and base64-encoded locally.
-   Still TODO: set webhook secret if not already set, store all app
-   secrets in the Vercel project's env vars once that project exists.
-3. Webhook route: HMAC verify → Zod validate → skip rules → rate limit →
-   enqueue QStash job with debounce delay.
-4. Installation sync: handle installation / installation_repositories
-   events into DB.
-5. Vitest for pure core with captured webhook fixtures.
-6. End-to-end verification on scratch repo via webhook redelivery.
-7. Minimal dashboard: installations via `GET /user/installations`, reviews
-   table + detail view, polling.
-8. Install the same `diffguard-dev` app on owner's real repos; dogfood.
-9. Invite 4–5 beta users.
+1. Install the same `diffguard-dev` app on owner's real repos; dogfood via
+   dashboard while a PR flows through.
+2. Invite 4–5 beta users (Phase 1 complete once dogfood is clean).
+3. Phase 2 candidates: inline comments, full-file context, onboarding polish.
 
 ## Open Questions
 
@@ -186,9 +183,10 @@ Update this file after every meaningful implementation change.
 - Context: PR title/body + changed-file tree + optional `.aireview.md` /
   `AGENTS.md` (delimited, add-only, untrusted). Full-file context →
   Phase 2; RAG out of scope.
-- Auth: Clerk GitHub-OAuth-only; installation access derived from
-  GitHub's `/user/installations` per session; no users table; no manual
-  linking (removes an authorization vulnerability class).
+- Auth: Clerk supplies identity; a separate one-time GitHub App user OAuth
+  grant supplies `/user/installations` access. Tokens are encrypted in Redis,
+  refresh automatically, and are keyed by Clerk user id. There is no users
+  table or manual installation linking.
 - Reliability: idempotency on (repository, pr_number, head_sha) unique
   key; QStash retries; DLQ checked manually; maxDuration 300 with ~120s
   LLM abort.

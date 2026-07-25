@@ -1,23 +1,45 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { Redis } from "@upstash/redis";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { parseEnv } from "@/lib/config/env";
+import { githubAppAuth } from "./github-app";
 import { getUserInstallations } from "@/lib/github/client";
 
 const CACHE_TTL_SECONDS = 300;
 const installationIdsSchema = z.array(z.number().int().positive());
+
+/** Dashboard access only needs Redis for the installation cache — not App secrets. */
+const dashboardCacheEnvSchema = z.object({
+  UPSTASH_REDIS_REST_URL: z.string().url(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
+});
 
 type Cache = {
   get: (key: string) => Promise<unknown>;
   set: (key: string, value: number[], options: { ex: number }) => Promise<unknown>;
 };
 
+export class GitHubAuthorizationRequiredError extends Error {
+  constructor() {
+    super("GitHub authorization is required.");
+    this.name = "GitHubAuthorizationRequiredError";
+  }
+}
+
 export type AccessibleInstallationDependencies = {
   getGithubToken: (userId: string) => Promise<string | null>;
   getUserInstallations: (token: string) => Promise<number[]>;
+  revokeGithubToken: (userId: string) => Promise<void>;
   cache: Cache;
 };
+
+function isGithubAuthenticationFailure(error: unknown) {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return false;
+  }
+  return error.status === 401;
+}
 
 function cacheKey(userId: string) {
   return `dashboard:installations:${userId}`;
@@ -35,9 +57,16 @@ export async function resolveAccessibleInstallations(
   const token = await dependencies.getGithubToken(userId);
   if (!token) return [];
 
-  const installationIds = installationIdsSchema.parse(
-    await dependencies.getUserInstallations(token),
-  );
+  let installationIds: number[];
+  try {
+    installationIds = installationIdsSchema.parse(
+      await dependencies.getUserInstallations(token),
+    );
+  } catch (error) {
+    if (!isGithubAuthenticationFailure(error)) throw error;
+    await dependencies.revokeGithubToken(userId);
+    throw new GitHubAuthorizationRequiredError();
+  }
   await dependencies.cache.set(cacheKey(userId), installationIds, {
     ex: CACHE_TTL_SECONDS,
   });
@@ -45,19 +74,19 @@ export async function resolveAccessibleInstallations(
 }
 
 function createDefaultDependencies(): AccessibleInstallationDependencies {
-  const env = parseEnv();
+  const env = dashboardCacheEnvSchema.parse({
+    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+    UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
   const redis = new Redis({
     url: env.UPSTASH_REDIS_REST_URL,
     token: env.UPSTASH_REDIS_REST_TOKEN,
   });
 
   return {
-    async getGithubToken(userId) {
-      const client = await clerkClient();
-      const response = await client.users.getUserOauthAccessToken(userId, "oauth_github");
-      return response.data[0]?.token ?? null;
-    },
+    getGithubToken: (userId: string) => githubAppAuth().getAccessToken(userId),
     getUserInstallations,
+    revokeGithubToken: (userId: string) => githubAppAuth().revoke(userId),
     cache: {
       get: (key) => redis.get(key),
       set: (key, value, options) => redis.set(key, value, options),
@@ -76,5 +105,22 @@ export async function getAccessibleInstallations() {
 
 export async function requireDashboardInstallations() {
   await auth.protect();
-  return getAccessibleInstallations();
+  const { userId } = await auth();
+  if (!userId) return [];
+
+  const dependencies = defaultDependencies ??= createDefaultDependencies();
+  const token = await dependencies.getGithubToken(userId);
+  if (!token) {
+    redirect("/api/auth/github/start?returnTo=%2Fdashboard");
+  }
+
+  try {
+    return await resolveAccessibleInstallations(userId, {
+      ...dependencies,
+      getGithubToken: async () => token,
+    });
+  } catch (error) {
+    if (!(error instanceof GitHubAuthorizationRequiredError)) throw error;
+    redirect("/api/auth/github/start?returnTo=%2Fdashboard");
+  }
 }

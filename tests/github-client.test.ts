@@ -108,4 +108,20 @@ describe("GitHub client", () => {
     await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([42, 84]);
     expect(oauthPaginate).toHaveBeenCalledWith("GET /user/installations", { per_page: 100 });
   });
+
+  it("resolves OAuth installations without constructing the GitHub App client", async () => {
+    const appAccess = vi.fn(() => {
+      throw new Error("App private key must not be required for OAuth access");
+    });
+    const oauthPaginate = vi.fn().mockResolvedValue([{ id: 7 }]);
+    const client = createGitHubClient({
+      get app() {
+        return appAccess();
+      },
+      createOAuthClient: () => ({ paginate: oauthPaginate }),
+    } as unknown as GitHubClientDependencies);
+
+    await expect(client.getUserInstallations("oauth-token")).resolves.toEqual([7]);
+    expect(appAccess).not.toHaveBeenCalled();
+  });
 });
