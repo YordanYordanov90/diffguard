@@ -1,3 +1,5 @@
+import { Clock3, Loader2 } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { ReviewStatus, SkipReason } from "@/lib/dashboard/types";
@@ -15,11 +17,24 @@ const statusStyles: Record<ReviewStatus, string> = {
 };
 
 export function StatusBadge({ status }: { status: ReviewStatus }) {
+  const showSpinner = status === "running";
+
   return (
     <Badge
       variant="outline"
-      className={cn("rounded-md capitalize", statusStyles[status])}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md capitalize",
+        statusStyles[status],
+      )}
     >
+      {showSpinner ? (
+        <Loader2
+          className="motion-safe:animate-spin h-3 w-3 shrink-0"
+          aria-hidden
+        />
+      ) : status === "queued" ? (
+        <Clock3 className="h-3 w-3 shrink-0" aria-hidden />
+      ) : null}
       {status}
     </Badge>
   );
