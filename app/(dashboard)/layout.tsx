@@ -1,3 +1,4 @@
+import { UserButton } from "@clerk/nextjs";
 import { Shield } from "lucide-react";
 
 import { DashboardNavigation } from "@/components/dashboard/dashboard-navigation";
@@ -33,6 +34,13 @@ function OnboardingHeader() {
             DiffGuard
           </span>
         </span>
+        <UserButton
+          appearance={{
+            elements: {
+              avatarBox: "h-8 w-8",
+            },
+          }}
+        />
       </div>
     </header>
   );
