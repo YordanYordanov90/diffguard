@@ -52,11 +52,15 @@ export type ReviewTriggerResult =
   | { status: "skipped"; reason: SkipReason }
   | { status: "queued" };
 
+type ReviewWorkerEnvironment = {
+  [key: string]: string | undefined;
+  VERCEL_ENV?: string;
+  VERCEL_PROJECT_PRODUCTION_URL?: string;
+  VERCEL_URL?: string;
+};
+
 export function getReviewWorkerUrl(
-  environment: Pick<
-    NodeJS.ProcessEnv,
-    "VERCEL_ENV" | "VERCEL_PROJECT_PRODUCTION_URL" | "VERCEL_URL"
-  > = process.env,
+  environment: ReviewWorkerEnvironment = process.env,
 ) {
   const host =
     environment.VERCEL_ENV === "production"
