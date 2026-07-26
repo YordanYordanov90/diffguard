@@ -54,13 +54,21 @@ export async function OverviewPage() {
 
 function OverviewHeader() {
   return (
-    <div className="space-y-2">
-      <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-        Overview
-      </h1>
-      <p className="max-w-xl text-sm text-text-muted">
-        Where DiffGuard is active, what happened recently, and what needs
-        attention.
+    <div className="flex flex-col gap-4 border-b border-border-default pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="space-y-2">
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent-primary">
+          Protection console
+        </p>
+        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+          Overview
+        </h1>
+        <p className="max-w-xl text-sm text-text-muted">
+          Where DiffGuard is active, what happened recently, and what needs
+          attention.
+        </p>
+      </div>
+      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-muted sm:pb-1">
+        Read-only workspace
       </p>
     </div>
   );

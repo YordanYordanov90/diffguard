@@ -77,7 +77,12 @@ function RailColumn({
             suspended ? "bg-state-warning" : "bg-accent-primary",
           )}
         />
-        <span className="absolute top-4 bottom-0 left-1/2 w-px -translate-x-1/2 bg-border-default" />
+        <span
+          className={cn(
+            "absolute top-4 bottom-0 left-1/2 w-px -translate-x-1/2",
+            suspended ? "bg-state-warning/50" : "bg-accent-primary/40",
+          )}
+        />
       </div>
     );
   }
