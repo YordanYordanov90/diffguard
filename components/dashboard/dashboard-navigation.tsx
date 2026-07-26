@@ -131,6 +131,9 @@ export function DashboardNavigation() {
           </Link>
         </div>
         <div className="flex flex-1 flex-col px-3 py-5">
+          <p className="mb-3 px-3 font-mono text-[10px] uppercase tracking-[0.18em] text-text-muted">
+            Workspace
+          </p>
           <NavigationLinks pathname={pathname} />
           <div className="mt-auto flex items-center justify-between border-t border-border-default px-3 pt-4">
             <span className="text-xs text-text-muted">GitHub account</span>
@@ -172,6 +175,9 @@ export function DashboardNavigation() {
                 </SheetDescription>
               </SheetHeader>
               <div className="px-3 py-5">
+                <p className="mb-3 px-3 font-mono text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                  Workspace
+                </p>
                 <NavigationLinks
                   pathname={pathname}
                   onNavigate={() => setMobileOpen(false)}

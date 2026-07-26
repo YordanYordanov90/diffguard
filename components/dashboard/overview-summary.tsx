@@ -49,7 +49,7 @@ export function OverviewSummaryStrip({ summary }: OverviewSummaryStripProps) {
           Protection summary
         </h2>
       </div>
-      <div className="flex flex-wrap divide-x divide-border-default">
+      <div className="grid grid-cols-2 divide-x divide-y divide-border-default sm:grid-cols-4 sm:divide-y-0">
         <Metric
           value={summary.installationCount}
           label={

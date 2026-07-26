@@ -120,7 +120,7 @@ export function RepositoriesInventory({
             disabled={isPending}
           >
             <RefreshCw
-              className={cn("h-4 w-4", isPending && "animate-spin")}
+              className={cn("h-4 w-4", isPending && "motion-safe:animate-spin")}
               aria-hidden
             />
             Refresh
@@ -243,7 +243,7 @@ function EmptyRepositories({
               disabled={isPending}
             >
               <RefreshCw
-                className={cn("h-4 w-4", isPending && "animate-spin")}
+                className={cn("h-4 w-4", isPending && "motion-safe:animate-spin")}
                 aria-hidden
               />
               Refresh

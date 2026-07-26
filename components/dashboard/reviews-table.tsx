@@ -88,7 +88,7 @@ export function ReviewsTable({
               disabled={isPending}
             >
               <RefreshCw
-                className={cn("h-4 w-4", isPending && "animate-spin")}
+                className={cn("h-4 w-4", isPending && "motion-safe:animate-spin")}
                 aria-hidden
               />
               Refresh
@@ -121,7 +121,7 @@ export function ReviewsTable({
           disabled={isPending}
         >
           <RefreshCw
-            className={cn("h-3.5 w-3.5", isPending && "animate-spin")}
+            className={cn("h-3.5 w-3.5", isPending && "motion-safe:animate-spin")}
             aria-hidden
           />
           Refresh
@@ -170,6 +170,7 @@ export function ReviewsTable({
                   data-state={selectedId === review.id ? "selected" : undefined}
                   onClick={() => setSelectedId(review.id)}
                   onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       setSelectedId(review.id);
