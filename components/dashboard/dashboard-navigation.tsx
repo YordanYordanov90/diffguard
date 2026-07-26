@@ -40,16 +40,27 @@ function Brand({ compact = false }: { compact?: boolean }) {
       <span className="flex h-8 w-8 items-center justify-center rounded-md border border-border-default bg-bg-raised">
         <Shield className="h-4 w-4 text-accent-primary" aria-hidden />
       </span>
-      <span className={cn("text-sm font-semibold tracking-tight text-text-primary", compact && "sr-only")}>
+      <span
+        className={cn(
+          "text-sm font-semibold tracking-tight text-text-primary",
+          compact && "sr-only",
+        )}
+      >
         DiffGuard
       </span>
     </span>
   );
 }
 
-function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function NavigationLinks({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+}) {
   return (
-    <nav aria-label="Dashboard" className="space-y-1">
+    <nav aria-label="Dashboard" className="space-y-0.5">
       {navigation.map(({ href, label, icon: Icon }) => {
         const active = isActivePath(pathname, href);
         return (
@@ -59,21 +70,28 @@ function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigat
             aria-current={active ? "page" : undefined}
             onClick={onNavigate}
             className={cn(
-              "group flex items-center gap-3 rounded-md border border-transparent px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary",
+              "group relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary",
               active
-                ? "border-border-default bg-bg-raised text-text-primary"
-                : "text-text-muted hover:bg-bg-raised/70 hover:text-text-primary",
+                ? "bg-bg-raised text-text-primary"
+                : "text-text-muted hover:bg-bg-raised/60 hover:text-text-primary",
             )}
           >
+            {active ? (
+              <span
+                className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent-primary"
+                aria-hidden
+              />
+            ) : null}
             <Icon
               className={cn(
                 "h-4 w-4 shrink-0",
-                active ? "text-accent-primary" : "text-text-muted group-hover:text-text-primary",
+                active
+                  ? "text-accent-primary"
+                  : "text-text-muted group-hover:text-text-primary",
               )}
               aria-hidden
             />
             <span>{label}</span>
-            {active ? <span className="ml-auto h-1.5 w-1.5 rounded-full bg-accent-primary" aria-hidden /> : null}
           </Link>
         );
       })}
@@ -96,12 +114,14 @@ function UserAccount() {
 export function DashboardNavigation() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const currentPage = navigation.find(({ href }) => isActivePath(pathname, href))?.label ?? "Dashboard";
+  const currentPage =
+    navigation.find(({ href }) => isActivePath(pathname, href))?.label ??
+    "Dashboard";
 
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-border-default bg-bg-surface lg:flex">
-        <div className="flex h-16 items-center border-b border-border-default px-5">
+        <div className="flex h-14 items-center border-b border-border-default px-5">
           <Link
             href="/dashboard"
             className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent-primary"
@@ -110,10 +130,7 @@ export function DashboardNavigation() {
             <Brand />
           </Link>
         </div>
-        <div className="flex flex-1 flex-col px-3 py-6">
-          <p className="mb-3 px-3 font-mono text-[10px] uppercase tracking-[0.18em] text-text-muted">
-            Workspace
-          </p>
+        <div className="flex flex-1 flex-col px-3 py-5">
           <NavigationLinks pathname={pathname} />
           <div className="mt-auto flex items-center justify-between border-t border-border-default px-3 pt-4">
             <span className="text-xs text-text-muted">GitHub account</span>
@@ -134,17 +151,31 @@ export function DashboardNavigation() {
           <span className="text-sm text-text-muted">{currentPage}</span>
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Open dashboard navigation">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Open dashboard navigation"
+              >
                 <Menu aria-hidden />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-[min(84vw,20rem)] border-border-default bg-bg-surface p-0">
+            <SheetContent
+              side="left"
+              className="w-[min(84vw,20rem)] border-border-default bg-bg-surface p-0"
+            >
               <SheetHeader className="border-b border-border-default px-5 py-4 text-left">
-                <SheetTitle className="text-text-primary"><Brand /></SheetTitle>
-                <SheetDescription className="sr-only">Dashboard navigation</SheetDescription>
+                <SheetTitle className="text-text-primary">
+                  <Brand />
+                </SheetTitle>
+                <SheetDescription className="sr-only">
+                  Dashboard navigation
+                </SheetDescription>
               </SheetHeader>
-              <div className="px-3 py-6">
-                <NavigationLinks pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+              <div className="px-3 py-5">
+                <NavigationLinks
+                  pathname={pathname}
+                  onNavigate={() => setMobileOpen(false)}
+                />
               </div>
               <div className="mt-auto flex items-center justify-between border-t border-border-default px-5 py-4">
                 <span className="text-xs text-text-muted">GitHub account</span>

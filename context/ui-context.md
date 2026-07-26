@@ -25,6 +25,18 @@ states attach to it, making the App's protection boundary visible. Avoid
 decorative stat-card grids, glowing gradients, glass everywhere, oversized
 marketing headings, and charts without an operational decision behind them.
 
+### Signal-inspired refinement
+
+Signal's DevOps dashboard is a visual reference for operational density,
+near-black surfaces, precise dividers, and status-led scanability. It is not a
+template to copy. DiffGuard keeps its own Geist typography, restrained color
+semantics, small navigation inventory, GitHub vocabulary, and coverage-first
+information architecture.
+
+Do not adopt terminal prompts, neon-green decoration, green-tinted panels,
+chart-heavy layouts, oversized infrastructure menus, or ambient glow. The
+Signal influence should be visible in clarity and rhythm, not imitation.
+
 ## Colors
 
 All components use these CSS custom properties. Do not hardcode hex values in
@@ -77,6 +89,8 @@ not marketing-scale typography.
 Use hairline borders to separate operational regions. Prefer a single panel
 with meaningful internal dividers over many floating cards. Rows must remain
 comfortable to scan and target with a pointer without becoming oversized.
+Use raised surfaces selectively for active navigation, focused rows, and
+temporary overlays rather than as the default treatment for every region.
 
 ## Information Architecture
 
@@ -97,7 +111,10 @@ Desktop uses a persistent left sidebar, approximately 240px wide, and a
 flexible content region. The sidebar contains the DiffGuard mark/wordmark,
 primary navigation, then the Clerk user control anchored at the bottom.
 The active route uses a quiet raised surface, a slim accent indicator, and
-`aria-current="page"`; it does not rely on green text alone.
+`aria-current="page"`; it does not rely on green text alone. The accent
+indicator is a slim left rail, not a trailing status dot. Do not add inactive
+destinations, nested navigation, global search, notifications, or a theme
+switcher for visual fullness.
 
 Mobile replaces the sidebar with a compact sticky top bar and shadcn Sheet.
 The top bar contains the mark, current page label, navigation trigger, and
@@ -123,15 +140,20 @@ show operational navigation for pages the user cannot use yet.
 
 ## Overview
 
-The overview leads with the coverage rail, not generic metric cards.
+The overview leads with one compact **Protection summary** followed by the
+coverage rail, not generic metric cards. The summary is a single operational
+strip with internal dividers; it does not render as four floating cards.
 
 ```text
+Protection summary
+2 installations · 14 repositories · 6 reviews today · 1 needs attention
+
 Repository coverage
 
 ● YordanYordanov90                       All repositories · Active
-│  ✓ diffguard                           Reviewed 2m ago
-│  ○ weather-app                         Awaiting first review
-│  ! portfolio                           Latest review failed
+│  ✓ YordanYordanov90/diffguard          Reviewed 2m ago
+│  ○ YordanYordanov90/weather-app        Awaiting first review
+│  ! YordanYordanov90/portfolio          Review failed
 │
 ● example-org                            Selected repositories · Suspended
    ! api                                  Installation suspended
@@ -139,9 +161,24 @@ Repository coverage
 Recent reviews                                      View all reviews →
 ```
 
-The compact summary may show accessible installations, covered repositories,
-reviews today, and repositories needing attention, but these values belong in
-the coverage header or one restrained summary strip. No trend charts.
+The summary may show only accessible installations, covered repositories,
+reviews today, and repositories needing attention. Healthy values remain
+neutral; the attention value uses warning emphasis only when non-zero. Do not
+invent percentages, trends, or an aggregate health label without a defined
+derivation. No trend charts.
+
+The coverage rail is a real structural device rather than a decorative left
+border:
+
+- each installation starts a continuous rail segment with a visible node;
+- repository rows attach to that segment with connectors;
+- desktop rows align repository identity and latest-review detail into stable
+  columns;
+- mobile rows keep the rail and stack the detail below the repository name;
+- hover and focus use a subtle surface or border change, not a floating card;
+- markers combine symbol or icon, text, and semantic color.
+
+Keep exactly one `View all reviews` action on the overview.
 
 Attention is defined as an installation being suspended, a latest review
 being `failed`, or a latest completed review having verdict `concerns`.
@@ -150,6 +187,8 @@ being `failed`, or a latest completed review having verdict `concerns`.
 ## Reviews
 
 - Full-width data table; a row opens the existing review detail Sheet.
+- Table and panel headers use the same compact hierarchy, dividers, and density
+  as the coverage rail.
 - Columns: repository, PR link, status, findings count, model, duration,
   timestamp.
 - Light polling at approximately five seconds plus manual refresh; no
@@ -165,6 +204,10 @@ Group repositories by accessible GitHub installation/account. Each group
 header shows account identity, access mode (`All repositories` or
 `Selected repositories`), covered count, installation state, and
 `Manage on GitHub`.
+
+Installation headers, rail connectors, repository markers, panel borders, and
+row rhythm match the overview coverage rail so both pages teach the same
+protection model.
 
 Repository rows show:
 
@@ -234,3 +277,5 @@ include ExternalLink and visible text.
   `running` review. Do not animate queued status or use pulsing indicators.
 - Verify at 320px, tablet, and wide desktop widths. Long repository names
   truncate visually but remain available through accessible text/tooltip.
+- Loading skeletons mirror the final panel geometry closely enough to avoid
+  visible layout shift.

@@ -42,9 +42,6 @@ export async function RepositoriesPage() {
 function RepositoriesHeader() {
   return (
     <div className="space-y-2">
-      <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-primary">
-        Coverage
-      </p>
       <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
         Repositories
       </h1>
