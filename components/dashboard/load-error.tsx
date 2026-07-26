@@ -20,31 +20,35 @@ export function LoadError({
   const [isPending, startTransition] = useTransition();
 
   return (
-    <section className="rounded-lg border border-border-default bg-bg-surface p-8 sm:p-12">
-      <div className="mx-auto flex max-w-md flex-col items-center text-center">
-        <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-border-default bg-bg-raised">
-          <AlertTriangle className="h-5 w-5 text-state-warning" aria-hidden />
+    <section className="rounded-lg border border-border-default bg-bg-surface px-5 py-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border-default bg-bg-raised">
+          <AlertTriangle className="h-4 w-4 text-state-warning" aria-hidden />
         </span>
-        <h2 className="text-lg font-medium text-text-primary">{title}</h2>
-        <p className="mt-2 text-sm leading-relaxed text-text-muted">{description}</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-6 border-border-default bg-bg-raised text-text-primary hover:bg-bg-raised/80"
-          onClick={() => {
-            startTransition(() => {
-              router.refresh();
-            });
-          }}
-          disabled={isPending}
-        >
-          <RefreshCw
-            className={cn("h-4 w-4", isPending && "animate-spin")}
-            aria-hidden
-          />
-          Try again
-        </Button>
+        <div className="min-w-0 space-y-3">
+          <div>
+            <h2 className="text-sm font-medium text-text-primary">{title}</h2>
+            <p className="mt-1 text-sm text-text-muted">{description}</p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-border-default bg-bg-raised text-text-primary hover:bg-bg-raised/80"
+            onClick={() => {
+              startTransition(() => {
+                router.refresh();
+              });
+            }}
+            disabled={isPending}
+          >
+            <RefreshCw
+              className={cn("h-4 w-4", isPending && "animate-spin")}
+              aria-hidden
+            />
+            Try again
+          </Button>
+        </div>
       </div>
     </section>
   );

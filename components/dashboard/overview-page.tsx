@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, FolderGit2, GitPullRequest } from "lucide-react";
+import { ArrowRight, ExternalLink, FolderGit2, GitPullRequest } from "lucide-react";
 
 import { CoverageRail } from "@/components/dashboard/coverage-rail";
 import { GitHubOnboarding } from "@/components/dashboard/github-onboarding";
@@ -54,53 +54,45 @@ export async function OverviewPage() {
 
 function OverviewHeader() {
   return (
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div className="space-y-2">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-accent-primary">
-          Workspace
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-          Overview
-        </h1>
-        <p className="max-w-xl text-sm text-text-muted">
-          Where DiffGuard is active, what happened recently, and what needs
-          attention.
-        </p>
-      </div>
-      <Link
-        href="/dashboard/reviews"
-        className="inline-flex items-center gap-2 self-start rounded-md border border-border-default bg-bg-surface px-3 py-2 text-sm text-text-primary outline-none transition-colors hover:bg-bg-raised focus-visible:ring-2 focus-visible:ring-accent-primary sm:self-auto"
-      >
-        View all reviews
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      </Link>
+    <div className="space-y-2">
+      <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+        Overview
+      </h1>
+      <p className="max-w-xl text-sm text-text-muted">
+        Where DiffGuard is active, what happened recently, and what needs
+        attention.
+      </p>
     </div>
   );
 }
 
 function EmptyRepositories({ installUrl }: { installUrl: string }) {
   return (
-    <section className="rounded-lg border border-border-default bg-bg-surface p-8 sm:p-12">
-      <div className="mx-auto flex max-w-md flex-col items-center text-center">
-        <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-border-default bg-bg-raised">
-          <FolderGit2 className="h-5 w-5 text-accent-primary" aria-hidden />
+    <section className="rounded-lg border border-border-default bg-bg-surface px-5 py-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border-default bg-bg-raised">
+          <FolderGit2 className="h-4 w-4 text-text-muted" aria-hidden />
         </span>
-        <h2 className="text-lg font-medium text-text-primary">
-          Choose repositories on GitHub
-        </h2>
-        <p className="mt-2 text-sm leading-relaxed text-text-muted">
-          DiffGuard is installed, but no repositories are covered yet. Select
-          repositories on GitHub to start protecting pull requests.
-        </p>
-        <a
-          href={installUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-6 inline-flex items-center gap-2 rounded-md border border-border-default bg-bg-raised px-3 py-2 text-sm text-text-primary outline-none transition-colors hover:bg-bg-raised/80 focus-visible:ring-2 focus-visible:ring-accent-primary"
-        >
-          Manage on GitHub
-          <ArrowRight className="h-4 w-4" aria-hidden />
-        </a>
+        <div className="min-w-0 space-y-3">
+          <div>
+            <h2 className="text-sm font-medium text-text-primary">
+              Choose repositories on GitHub
+            </h2>
+            <p className="mt-1 text-sm text-text-muted">
+              DiffGuard is installed, but no repositories are covered yet.
+              Select repositories on GitHub to start protecting pull requests.
+            </p>
+          </div>
+          <a
+            href={installUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-accent-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-accent-primary"
+          >
+            Manage on GitHub
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          </a>
+        </div>
       </div>
     </section>
   );
@@ -111,22 +103,20 @@ function RecentReviewsSection({ data }: { data: OverviewModel }) {
   const hasReviews = data.recentReviews.length > 0;
 
   return (
-    <section aria-labelledby="recent-reviews-heading" className="space-y-4">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h2
-            id="recent-reviews-heading"
-            className="font-mono text-xs uppercase tracking-[0.16em] text-text-muted"
-          >
-            Recent reviews
-          </h2>
-          <p className="mt-1 text-sm text-text-muted">
-            Latest activity across accessible installations.
-          </p>
-        </div>
+    <section
+      aria-labelledby="recent-reviews-heading"
+      className="overflow-hidden rounded-lg border border-border-default bg-bg-surface"
+    >
+      <div className="flex items-center justify-between gap-4 border-b border-border-default px-4 py-3 sm:px-5">
+        <h2
+          id="recent-reviews-heading"
+          className="font-mono text-[11px] uppercase tracking-[0.16em] text-text-muted"
+        >
+          Recent reviews
+        </h2>
         <Link
           href="/dashboard/reviews"
-          className="inline-flex shrink-0 items-center gap-1.5 text-sm text-accent-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-accent-primary"
+          className="inline-flex shrink-0 items-center gap-1.5 text-sm text-text-primary outline-none transition-colors hover:text-accent-primary focus-visible:ring-2 focus-visible:ring-accent-primary"
         >
           View all reviews
           <ArrowRight className="h-4 w-4" aria-hidden />
@@ -134,25 +124,26 @@ function RecentReviewsSection({ data }: { data: OverviewModel }) {
       </div>
 
       {hasReviews ? (
-        <ReviewsTable reviews={data.recentReviews} />
+        <div className="p-0">
+          <ReviewsTable reviews={data.recentReviews} embedded />
+        </div>
       ) : hasRepos ? (
-        <section className="rounded-lg border border-border-default bg-bg-surface p-8 sm:p-12">
-          <div className="mx-auto flex max-w-md flex-col items-center text-center">
-            <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-border-default bg-bg-raised">
-              <GitPullRequest
-                className="h-5 w-5 text-accent-primary"
-                aria-hidden
-              />
+        <div className="px-5 py-8">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border-default bg-bg-raised">
+              <GitPullRequest className="h-4 w-4 text-text-muted" aria-hidden />
             </span>
-            <h3 className="text-lg font-medium text-text-primary">
-              Open a pull request
-            </h3>
-            <p className="mt-2 text-sm leading-relaxed text-text-muted">
-              Repositories are covered. Open or update a pull request to trigger
-              the first DiffGuard review.
-            </p>
+            <div>
+              <h3 className="text-sm font-medium text-text-primary">
+                Open a pull request
+              </h3>
+              <p className="mt-1 text-sm text-text-muted">
+                Repositories are covered. Open or update a pull request to
+                trigger the first DiffGuard review.
+              </p>
+            </div>
           </div>
-        </section>
+        </div>
       ) : null}
     </section>
   );
