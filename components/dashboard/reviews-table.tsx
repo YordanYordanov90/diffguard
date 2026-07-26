@@ -224,13 +224,16 @@ export function ReviewsTable({
           </Table>
         </div>
 
-        {/* Narrow screens: two-line rows */}
+        {/* Narrow screens: row open-control and PR link are siblings */}
         <ul className="divide-y divide-border-default md:hidden">
           {reviews.map((review) => (
-            <li key={review.id}>
+            <li
+              key={review.id}
+              className="px-4 py-3 transition-colors hover:bg-bg-raised/50"
+            >
               <button
                 type="button"
-                className="flex w-full flex-col gap-1.5 px-4 py-3 text-left outline-none transition-colors hover:bg-bg-raised/50 focus-visible:bg-bg-raised/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary"
+                className="flex w-full flex-col gap-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent-primary"
                 onClick={() => setSelectedId(review.id)}
                 aria-label={`Open review for ${review.repositoryName} PR ${review.prNumber}`}
               >
@@ -244,16 +247,6 @@ export function ReviewsTable({
                   <StatusBadge status={review.status} />
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-text-muted">
-                  <a
-                    href={githubPrUrl(review.repositoryName, review.prNumber)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-accent-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-accent-primary"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    #{review.prNumber}
-                    <ExternalLink className="h-3 w-3" aria-hidden />
-                  </a>
                   <span className="tabular-nums">
                     {review.findingsCount}{" "}
                     {review.findingsCount === 1 ? "finding" : "findings"}
@@ -261,6 +254,15 @@ export function ReviewsTable({
                   <span>{formatTimestamp(review.createdAt)}</span>
                 </div>
               </button>
+              <a
+                href={githubPrUrl(review.repositoryName, review.prNumber)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1.5 inline-flex items-center gap-1 font-mono text-[11px] text-accent-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-accent-primary"
+              >
+                #{review.prNumber}
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </a>
             </li>
           ))}
         </ul>
