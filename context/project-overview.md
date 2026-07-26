@@ -56,7 +56,7 @@ with a multi-tenant foundation that can scale later.
   duration, timestamp; light polling refresh
 - Review detail view: stored review markdown + error text on failure
 
-### Dashboard Operations Expansion (next)
+### Dashboard Operations Expansion (complete)
 
 - Responsive left-sidebar workspace with Overview, Reviews, and Repositories
 - Coverage-first overview grouped by GitHub installation/account
@@ -67,9 +67,32 @@ with a multi-tenant foundation that can scale later.
 
 ### Review Quality Expansion (Phase 2)
 
-- Inline review comments (file/line) reusing the structured findings
-- Full-file "smart context" fetching to reduce false positives
-- Additional onboarding polish after dashboard dogfooding
+- Smart full-file context followed by bounded one-hop related-code context
+  to reduce false positives without cloning or persisting repositories
+- An independent finding-evidence adjudication gate with PR #38 regression
+  fixtures, followed by durable finding identities
+- High-confidence inline comments and validated GitHub suggested changes while
+  the edit-in-place summary remains canonical
+- Incremental reviews with new/open/resolved finding reconciliation so later
+  pushes do not repeat unchanged feedback
+- Linked GitHub Issue requirement validation using explicit closing references
+- Explicit collaborator feedback and governed repository learnings that remain
+  subordinate to DiffGuard's immutable security rules
+
+The implementation ledger splits this work into Features 22–32 so each
+security boundary, migration, and pipeline change can be verified separately.
+
+### PR Conversation (final quality feature)
+
+- A permission-gated, rate-limited GitHub comment boundary
+- PR-scoped questions and deterministic review controls such as review,
+  full review, pause, and resume
+- Explanatory only: no branch writes, commits, tool execution, or persistent
+  conversation memory
+
+This remains last in the roadmap (Features 33–34). Review accuracy,
+context, inline usefulness, incremental behavior, and learnings must be
+dogfooded first.
 
 ### Later (Phase 3 — out of MVP)
 
