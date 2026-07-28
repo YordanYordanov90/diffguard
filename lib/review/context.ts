@@ -29,6 +29,7 @@ export type FullFileContextMissReason =
   | "missing"
   | "unsupported"
   | "oversized"
+  | "truncated"
   | "unavailable"
   | "timeout"
   | "over_budget";
@@ -152,6 +153,7 @@ export function createFullFileContextMetadata(candidateCount: number): FullFileC
       missing: 0,
       unsupported: 0,
       oversized: 0,
+      truncated: 0,
       unavailable: 0,
       timeout: 0,
       over_budget: 0,

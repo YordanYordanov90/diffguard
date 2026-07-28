@@ -1,4 +1,4 @@
-import type { FullFileContext } from "./context";
+import { estimateContextTokens, type FullFileContext } from "./context";
 
 export type PromptContext = {
   prTitle: string;
@@ -14,6 +14,10 @@ export type ReviewPrompt = {
   system: string;
   user: string;
 };
+
+export function estimateReviewPromptTokens(prompt: ReviewPrompt): number {
+  return estimateContextTokens(`${prompt.system}\n${prompt.user}`);
+}
 
 const SYSTEM_PROMPT = `You are DiffGuard, an expert pull request reviewer.
 

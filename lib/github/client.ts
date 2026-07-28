@@ -23,7 +23,7 @@ export type InstallationClient = InstallationOctokit;
 
 export type RepositoryFileResult =
   | { status: "fetched"; content: string; byteLength: number }
-  | { status: "missing" | "unsupported" | "oversized" };
+  | { status: "missing" | "unsupported" | "oversized" | "truncated" };
 
 const fileResponseSchema = z.object({
   type: z.literal("file"),
@@ -35,6 +35,8 @@ const fileResponseSchema = z.object({
 const pullResponseSchema = z.object({
   head: z.object({ sha: z.string().min(1) }),
 });
+
+const repositoryShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
 
 function createDefaultDependencies(): GitHubClientDependencies {
   let app: AppClient | undefined;
@@ -91,6 +93,19 @@ function isSafeRepositoryPath(path: string) {
     !normalized.includes("\0") &&
     !normalized.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   );
+}
+
+function decodeRepositoryContent(value: string): Uint8Array | null {
+  const normalized = value.replace(/\s/g, "");
+  if (
+    normalized.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)
+  ) {
+    return null;
+  }
+  const bytes = Buffer.from(normalized, "base64");
+  const canonical = bytes.toString("base64").replace(/=+$/, "");
+  return canonical === normalized.replace(/=+$/, "") ? bytes : null;
 }
 
 async function getInstallationClient(
@@ -193,6 +208,10 @@ export function createGitHubClient(
       maxBytes: number,
       signal?: AbortSignal,
     ): Promise<RepositoryFileResult> {
+      repositoryShaSchema.parse(ref);
+      if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+        throw new Error("maxBytes must be a non-negative integer.");
+      }
       if (!isSafeRepositoryPath(path)) return { status: "unsupported" };
       const { owner, repo } = parseRepositoryName(repoFullName);
       const octokit = await getInstallationClient(dependencies, installationId);
@@ -212,9 +231,19 @@ export function createGitHubClient(
         if (file.data.size !== undefined && file.data.size > maxBytes) {
           return { status: "oversized" };
         }
-        const decoded = Buffer.from(file.data.content.replace(/\s/g, ""), "base64").toString("utf8");
-        const byteLength = Buffer.byteLength(decoded, "utf8");
+        const bytes = decodeRepositoryContent(file.data.content);
+        if (!bytes) return { status: "unsupported" };
+        let decoded: string;
+        try {
+          decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          return { status: "unsupported" };
+        }
+        const byteLength = bytes.byteLength;
         if (byteLength > maxBytes) return { status: "oversized" };
+        if (file.data.size !== undefined && byteLength !== file.data.size) {
+          return { status: "truncated" };
+        }
         if (decoded.includes("\0")) return { status: "unsupported" };
         return { status: "fetched", content: decoded, byteLength };
       } catch (error) {

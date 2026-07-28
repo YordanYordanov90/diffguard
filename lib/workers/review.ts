@@ -1,6 +1,11 @@
 import { Receiver } from "@upstash/qstash";
 
-import { DAILY_REVIEW_CAP } from "@/lib/config/constants";
+import {
+  DAILY_REVIEW_CAP,
+  FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
+  FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
+  REVIEW_PROMPT_TOKEN_BUDGET,
+} from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
 import type {
   countReviewsToday,
@@ -22,7 +27,10 @@ import {
 import { processDiff } from "@/lib/review/diff";
 import { generateReview, ReviewFailedError } from "@/lib/review/generate";
 import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
-import { buildReviewPrompt } from "@/lib/review/prompt";
+import {
+  buildReviewPrompt,
+  estimateReviewPromptTokens,
+} from "@/lib/review/prompt";
 import { renderReview } from "@/lib/review/render";
 import type { ReviewOutput } from "@/lib/review/schema";
 import { retrieveFullFileContext } from "./context";
@@ -142,6 +150,14 @@ function isTerminalReview(review: NonNullable<StoredReview>) {
   return review.status === "completed" || review.status === "skipped";
 }
 
+function emptyContextBudget(promptTokens: number) {
+  const availableTokens = Math.max(0, REVIEW_PROMPT_TOKEN_BUDGET - promptTokens);
+  return {
+    totalTokenBudget: Math.min(FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT, availableTokens),
+    totalByteBudget: Math.min(FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT, availableTokens * 4),
+  };
+}
+
 async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies) {
   const review = await dependencies.queries.getReviewBySha(
     job.installationId,
@@ -186,12 +202,23 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     if (!model) throw new Error("Installation model configuration is missing.");
 
     const processedDiff = processDiff(rawDiff);
+    const basePrompt = buildReviewPrompt({
+      prTitle: job.prTitle,
+      prBody: job.prBody,
+      fileTree: processedDiff.fileTree,
+      diff: processedDiff.diff,
+      instructions,
+      skippedFiles: processedDiff.skippedFiles,
+      changedFileContext: [],
+    });
+    const contextBudget = emptyContextBudget(estimateReviewPromptTokens(basePrompt));
     const fullFileContext = await retrieveFullFileContext({
       installationId: job.installationId,
       repoFullName: job.repoFullName,
       headSha: job.headSha,
       files: processedDiff.files,
       fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
+      ...contextBudget,
     });
     const prompt = buildReviewPrompt({
       prTitle: job.prTitle,

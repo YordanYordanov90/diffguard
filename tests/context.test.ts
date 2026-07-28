@@ -91,6 +91,28 @@ describe("full-file context", () => {
     );
   });
 
+  it("respects the aggregate prompt context budget", async () => {
+    const fetchRepositoryFile = vi.fn().mockResolvedValue({
+      status: "fetched",
+      content: "1234567890",
+      byteLength: 10,
+    });
+
+    const result = await retrieveFullFileContext({
+      installationId: 42,
+      repoFullName: "owner/repo",
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      files: [hunk("src/auth/session.ts")],
+      fetchRepositoryFile,
+      totalByteBudget: 0,
+      totalTokenBudget: 0,
+    });
+
+    expect(result.files).toEqual([]);
+    expect(result.metadata.missReasons.over_budget).toBe(1);
+    expect(fetchRepositoryFile).not.toHaveBeenCalled();
+  });
+
   it("creates zeroed safe metadata", () => {
     expect(createFullFileContextMetadata(3)).toEqual({
       candidateCount: 3,
@@ -101,6 +123,7 @@ describe("full-file context", () => {
         missing: 0,
         unsupported: 0,
         oversized: 0,
+        truncated: 0,
         unavailable: 0,
         timeout: 0,
         over_budget: 0,

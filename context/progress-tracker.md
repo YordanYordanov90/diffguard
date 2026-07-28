@@ -191,7 +191,12 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None.
+- Feature 22 (Smart Full-File Context) — implementation underway:
+  bounded risk-ranked selection, exact-head GitHub Contents retrieval,
+  strict text/size validation, soft misses, timeout limits, prompt plumbing,
+  and aggregate runtime metadata are implemented. Focused and full automated
+  tests pass; PR #38 regression replay and end-to-end verification remain
+  before marking the feature complete.
 
 ## Next Up
 

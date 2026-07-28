@@ -217,12 +217,21 @@ PromptContext = {
   instructions:  string | null   // .aireview.md or AGENTS.md, <=~2k tokens,
                                  // delimited untrusted, add-only
   skippedFiles:  string[]        // disclosed in rendered comment
+  changedFileContext: {
+    file: string
+    content: string
+  }[]                          // bounded exact-head context, delimited untrusted
 }
 ```
 
 Filtering order: exclude lockfiles/generated/binary → rank by risk
 (auth/api/middleware/db first; tests/docs last) → fill ~50–60k token
 budget → remainder goes to `skippedFiles`.
+
+Feature 22 reserves a combined `REVIEW_PROMPT_TOKEN_BUDGET` for the diff,
+repository instructions, prompt structure, and bounded changed-file context.
+The worker estimates the assembled base prompt before retrieval and gives only
+the remaining token/byte capacity to full-file context.
 
 ---
 
@@ -464,14 +473,10 @@ strings and arrays receive explicit Zod length limits in the implementing
 feature. Candidate ids, finding-update ids, and issue numbers are checked
 against server-built allowlists after schema validation.
 
-### Planned prompt context additions (Features 22–24 and 28–31)
+### Planned prompt context additions (Features 23, 24, and 28–31)
 
 ```ts
 PromptContextV2 = PromptContext & {
-  changedFileContext: {
-    file: string
-    content: string
-  }[]
   relatedCodeContext: {
     file: string
     reason: string
@@ -499,6 +504,11 @@ PromptContextV2 = PromptContext & {
 Every content-bearing section is independently delimited and labeled
 untrusted. Token budgets apply to the combined prompt, not independently in a
 way that can exceed the configured LLM input limit.
+
+Feature 22 fetch metadata is runtime-only and aggregate-only. A repository file
+fetch may be `fetched`, `missing`, `unsupported`, `oversized`, or `truncated`;
+malformed or truncated content is never supplied to the prompt. Source content
+and file paths are not persisted in this metadata.
 
 ### Planned webhook/job contracts (Features 30, 33, and 34)
 

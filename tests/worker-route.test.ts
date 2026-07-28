@@ -140,6 +140,24 @@ describe("review worker route", () => {
     );
   });
 
+  it("does not fetch file context when the base prompt has no remaining budget", async () => {
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(
+        "diff --git a/src/auth.ts b/src/auth.ts\n@@ -1 +1 @@\n-old\n+new",
+      ),
+      fetchRepositoryFile: vi.fn(),
+    });
+
+    const response = await handleReviewWorker(
+      request({ ...job, prBody: "x".repeat(300_000) }),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchRepositoryFile).not.toHaveBeenCalled();
+    expect(dependencies.generateReview).toHaveBeenCalled();
+  });
+
   it("reuses the latest completed review comment for a new head SHA", async () => {
     const dependencies = createDependencies({
       getLatestReviewCommentId: vi.fn().mockResolvedValue(812),

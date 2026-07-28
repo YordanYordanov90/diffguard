@@ -103,6 +103,82 @@ describe("GitHub client", () => {
     await expect(client.fetchInstructionsFile(42, "owner/repo", sha)).resolves.toBeNull();
   });
 
+  it("fetches a bounded repository file at the exact validated head SHA", async () => {
+    const content = "export const safe = true;";
+    const { client, request } = createMockClient({
+      type: "file",
+      encoding: "base64",
+      content: Buffer.from(content).toString("base64"),
+      size: Buffer.byteLength(content),
+    });
+
+    await expect(
+      client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 1_000),
+    ).resolves.toEqual({
+      status: "fetched",
+      content,
+      byteLength: Buffer.byteLength(content),
+    });
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/contents/{path}",
+      {
+        owner: "owner",
+        repo: "repo",
+        path: "src/auth.ts",
+        ref: sha,
+      },
+    );
+  });
+
+  it("rejects invalid refs and traversal paths before fetching", async () => {
+    const { client, request } = createMockClient();
+
+    await expect(
+      client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", "main", 1_000),
+    ).rejects.toThrow("Invalid");
+    await expect(
+      client.fetchRepositoryFile(42, "owner/repo", "../secrets.txt", sha, 1_000),
+    ).resolves.toEqual({ status: "unsupported" });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed, non-text, oversized, and truncated content", async () => {
+    const malformed = createMockClient({ type: "file", encoding: "base64", content: "not-base64" });
+    await expect(
+      malformed.client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 1_000),
+    ).resolves.toEqual({ status: "unsupported" });
+
+    const binary = createMockClient({
+      type: "file",
+      encoding: "base64",
+      content: Buffer.from([0xff, 0xfe]).toString("base64"),
+      size: 2,
+    });
+    await expect(
+      binary.client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 1_000),
+    ).resolves.toEqual({ status: "unsupported" });
+
+    const oversized = createMockClient({
+      type: "file",
+      encoding: "base64",
+      content: Buffer.from("123456").toString("base64"),
+      size: 6,
+    });
+    await expect(
+      oversized.client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 5),
+    ).resolves.toEqual({ status: "oversized" });
+
+    const truncated = createMockClient({
+      type: "file",
+      encoding: "base64",
+      content: Buffer.from("hello").toString("base64"),
+      size: 6,
+    });
+    await expect(
+      truncated.client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 1_000),
+    ).resolves.toEqual({ status: "truncated" });
+  });
+
   it("creates new comments and updates existing comments in place", async () => {
     const { client, request } = createMockClient();
 
