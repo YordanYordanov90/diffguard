@@ -65,6 +65,14 @@
   trusted from a URL, query string, form value, or client state.
 - GitHub API access: short-lived installation tokens minted per job from
   the App private key. No PATs anywhere.
+- Smart full-file context fetches use only server-validated 40-character head
+  SHAs and repository-relative paths. Contents responses are strictly decoded,
+  bounded by declared and decoded byte counts, and discarded as soft misses
+  when missing, unsupported, malformed, oversized, or truncated.
+- The worker estimates the base prompt before retrieval and reserves the
+  remaining combined prompt budget for changed-file context; after retrieval,
+  it re-estimates the final prompt and drops trailing context files when
+  formatting overhead would exceed the combined budget.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

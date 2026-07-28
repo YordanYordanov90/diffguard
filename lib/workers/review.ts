@@ -1,6 +1,11 @@
 import { Receiver } from "@upstash/qstash";
 
-import { DAILY_REVIEW_CAP } from "@/lib/config/constants";
+import {
+  DAILY_REVIEW_CAP,
+  FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
+  FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
+  REVIEW_PROMPT_TOKEN_BUDGET,
+} from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
 import type {
   countReviewsToday,
@@ -16,14 +21,20 @@ import {
   fetchInstructionsFile,
   fetchPrDiff,
   fetchPrHeadSha,
+  fetchRepositoryFile,
   upsertComment,
 } from "@/lib/github/client";
 import { processDiff } from "@/lib/review/diff";
 import { generateReview, ReviewFailedError } from "@/lib/review/generate";
 import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
-import { buildReviewPrompt } from "@/lib/review/prompt";
+import {
+  buildReviewPrompt,
+  estimateReviewPromptTokens,
+  fitChangedFileContext,
+} from "@/lib/review/prompt";
 import { renderReview } from "@/lib/review/render";
 import type { ReviewOutput } from "@/lib/review/schema";
+import { retrieveFullFileContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 
@@ -42,6 +53,7 @@ type GitHubClient = {
   fetchPrHeadSha: typeof fetchPrHeadSha;
   fetchPrDiff: typeof fetchPrDiff;
   fetchInstructionsFile: typeof fetchInstructionsFile;
+  fetchRepositoryFile: typeof fetchRepositoryFile;
   upsertComment: typeof upsertComment;
 };
 
@@ -103,7 +115,13 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         return markReviewFailed(...args);
       },
     },
-    github: { fetchPrHeadSha, fetchPrDiff, fetchInstructionsFile, upsertComment },
+    github: {
+      fetchPrHeadSha,
+      fetchPrDiff,
+      fetchInstructionsFile,
+      fetchRepositoryFile,
+      upsertComment,
+    },
     generateReview,
   };
 }
@@ -131,6 +149,14 @@ function severityCounts(review: ReviewOutput) {
 
 function isTerminalReview(review: NonNullable<StoredReview>) {
   return review.status === "completed" || review.status === "skipped";
+}
+
+function emptyContextBudget(promptTokens: number) {
+  const availableTokens = Math.max(0, REVIEW_PROMPT_TOKEN_BUDGET - promptTokens);
+  return {
+    totalTokenBudget: Math.min(FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT, availableTokens),
+    totalByteBudget: Math.min(FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT, availableTokens * 4),
+  };
 }
 
 async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies) {
@@ -177,14 +203,29 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     if (!model) throw new Error("Installation model configuration is missing.");
 
     const processedDiff = processDiff(rawDiff);
-    const prompt = buildReviewPrompt({
+    const promptContext = {
       prTitle: job.prTitle,
       prBody: job.prBody,
       fileTree: processedDiff.fileTree,
       diff: processedDiff.diff,
       instructions,
       skippedFiles: processedDiff.skippedFiles,
+    };
+    const basePrompt = buildReviewPrompt({ ...promptContext, changedFileContext: [] });
+    const contextBudget = emptyContextBudget(estimateReviewPromptTokens(basePrompt));
+    const fullFileContext = await retrieveFullFileContext({
+      installationId: job.installationId,
+      repoFullName: job.repoFullName,
+      headSha: job.headSha,
+      files: processedDiff.files,
+      fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
+      ...contextBudget,
     });
+    const changedFileContext = fitChangedFileContext(
+      { ...promptContext, changedFileContext: fullFileContext.files },
+      REVIEW_PROMPT_TOKEN_BUDGET,
+    );
+    const prompt = buildReviewPrompt({ ...promptContext, changedFileContext });
     const generated = await dependencies.generateReview(prompt, { model });
     const markdown = renderReview(generated.output, {
       filesReviewed: processedDiff.files.length,
@@ -215,7 +256,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       outputTokens: generated.usage.outputTokens,
       durationMs: generated.durationMs,
     });
-    return { status: "completed" as const };
+    return { status: "completed" as const, context: fullFileContext.metadata };
   } catch (error) {
     await dependencies.queries.markReviewFailed(
       job.installationId,
@@ -266,4 +307,3 @@ export async function handleReviewWorker(
 export function createReviewWorkerDependencies() {
   return createDefaultDependencies();
 }
-

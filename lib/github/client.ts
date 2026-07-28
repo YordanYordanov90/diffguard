@@ -7,6 +7,10 @@ import {
   parseAccessibleInstallations,
   type AccessibleInstallation,
 } from "./accessible-installation";
+import {
+  isSafeRepositoryPath,
+  normalizeRepositoryPath,
+} from "../repository/path";
 
 export type { AccessibleInstallation } from "./accessible-installation";
 
@@ -21,15 +25,22 @@ export type GitHubClientDependencies = {
 
 export type InstallationClient = InstallationOctokit;
 
+export type RepositoryFileResult =
+  | { status: "fetched"; content: string; byteLength: number }
+  | { status: "missing" | "unsupported" | "oversized" | "truncated" };
+
 const fileResponseSchema = z.object({
   type: z.literal("file"),
   encoding: z.literal("base64"),
   content: z.string(),
+  size: z.number().int().nonnegative().optional(),
 });
 
 const pullResponseSchema = z.object({
   head: z.object({ sha: z.string().min(1) }),
 });
+
+const repositoryShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
 
 function createDefaultDependencies(): GitHubClientDependencies {
   let app: AppClient | undefined;
@@ -76,6 +87,19 @@ function isUnsupportedInstructionResponse(error: unknown) {
     error instanceof RequestError &&
     [403, 413, 422].includes(error.status)
   );
+}
+
+function decodeRepositoryContent(value: string): Uint8Array | null {
+  const normalized = value.replace(/\s/g, "");
+  if (
+    normalized.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)
+  ) {
+    return null;
+  }
+  const bytes = Buffer.from(normalized, "base64");
+  const canonical = bytes.toString("base64").replace(/=+$/, "");
+  return canonical === normalized.replace(/=+$/, "") ? bytes : null;
 }
 
 async function getInstallationClient(
@@ -170,6 +194,59 @@ export function createGitHubClient(
       return decoded.slice(0, INSTRUCTIONS_TOKEN_CAP * 4);
     },
 
+    async fetchRepositoryFile(
+      installationId: number,
+      repoFullName: string,
+      path: string,
+      ref: string,
+      maxBytes: number,
+      signal?: AbortSignal,
+    ): Promise<RepositoryFileResult> {
+      repositoryShaSchema.parse(ref);
+      if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+        throw new Error("maxBytes must be a non-negative integer.");
+      }
+      if (!isSafeRepositoryPath(path)) return { status: "unsupported" };
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/contents/{path}",
+          {
+            owner,
+            repo,
+            path: normalizeRepositoryPath(path),
+            ref,
+            ...(signal ? { request: { signal } } : {}),
+          },
+        );
+        const file = fileResponseSchema.safeParse(response.data);
+        if (!file.success) return { status: "unsupported" };
+        if (file.data.size !== undefined && file.data.size > maxBytes) {
+          return { status: "oversized" };
+        }
+        const bytes = decodeRepositoryContent(file.data.content);
+        if (!bytes) return { status: "unsupported" };
+        let decoded: string;
+        try {
+          decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          return { status: "unsupported" };
+        }
+        const byteLength = bytes.byteLength;
+        if (byteLength > maxBytes) return { status: "oversized" };
+        if (file.data.size !== undefined && byteLength !== file.data.size) {
+          return { status: "truncated" };
+        }
+        if (decoded.includes("\0")) return { status: "unsupported" };
+        return { status: "fetched", content: decoded, byteLength };
+      } catch (error) {
+        if (isNotFound(error)) return { status: "missing" };
+        if (isUnsupportedInstructionResponse(error)) return { status: "unsupported" };
+        throw error;
+      }
+    },
+
     async upsertComment(
       installationId: number,
       repoFullName: string,
@@ -229,6 +306,9 @@ export const githubClient = {
   fetchInstructionsFile: (
     ...args: Parameters<GitHubClient["fetchInstructionsFile"]>
   ) => getDefaultClient().fetchInstructionsFile(...args),
+  fetchRepositoryFile: (
+    ...args: Parameters<GitHubClient["fetchRepositoryFile"]>
+  ) => getDefaultClient().fetchRepositoryFile(...args),
   upsertComment: (...args: Parameters<GitHubClient["upsertComment"]>) =>
     getDefaultClient().upsertComment(...args),
   getUserInstallations: (
@@ -240,6 +320,7 @@ export const {
   fetchPrDiff,
   fetchPrHeadSha,
   fetchInstructionsFile,
+  fetchRepositoryFile,
   upsertComment,
   getUserInstallations,
 } = githubClient;

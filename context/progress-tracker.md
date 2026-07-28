@@ -6,6 +6,8 @@ Update this file after every meaningful implementation change.
 
 - Phase 1 core pipeline and dashboard foundation are complete.
 - Dashboard operations expansion (Features 18–21) is implemented.
+- Review-quality expansion is specified as Features 22–34; Feature 22 is in
+  progress.
 
 ## Current Goal
 
@@ -180,6 +182,12 @@ Update this file after every meaningful implementation change.
   server-side allowlisted repository filter on `/dashboard/reviews` are
   included. Navigation now links Overview, Reviews, and Repositories. Lint,
   full Vitest suite, and production build pass.
+- Review-quality roadmap specification — completed 2026-07-26
+  (documentation only): Features 22–34 split smart context, an independent
+  finding-evidence gate, durable findings, inline suggestions, incremental
+  reconciliation, linked-issue validation, governed learnings, and final
+  PR-scoped chat into verifiable increments. PR #38 at `3dfdbfb` is captured
+  as a required false-positive regression case. No application code changed.
 - Feature 21 dashboard UI refinement specification — completed 2026-07-26
   (documentation only): Signal is established as a reference for dark
   operational clarity while DiffGuard retains its restrained status semantics
@@ -200,13 +208,26 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None.
+- Feature 22 (Smart Full-File Context) — implementation underway:
+  bounded risk-ranked selection, exact-head GitHub Contents retrieval,
+  strict text/size validation, soft misses, timeout limits, prompt plumbing,
+  shared repository-path normalization, final prompt-budget trimming, and
+  aggregate runtime metadata are implemented. Focused and full automated tests
+  pass; PR #38 regression replay and end-to-end verification remain before
+  marking the feature complete.
 
 ## Next Up
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
-2. Later Phase 2 candidates: inline comments and full-file context.
+2. Implement the review-quality roadmap in dependency order:
+   - Features 22–23: smart full-file and related-code context;
+   - Feature 24: independent finding evidence/false-positive adjudication;
+   - Features 25–26: durable findings, inline comments, suggested changes;
+   - Features 27–28: incremental review and finding reconciliation;
+   - Feature 29: linked GitHub Issue validation;
+   - Features 30–32: feedback signals and governed repository learnings;
+   - Features 33–34: PR-scoped AI conversation as the final feature.
 
 ## Open Questions
 
@@ -215,6 +236,9 @@ Update this file after every meaningful implementation change.
   per installation; revisit after dev verification.
 - None blocking Features 18–20. Settings, billing, usage analytics, and
   in-app repository mutations remain explicitly deferred.
+- Features 29 and 33 introduce GitHub App permission approval gates
+  (`Issues: read`, then `Issues: write`). Confirm rollout timing after owner
+  dogfooding and before asking beta installations to approve new permissions.
 
 ## Architecture Decisions
 
