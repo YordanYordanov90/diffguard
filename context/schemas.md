@@ -221,6 +221,11 @@ PromptContext = {
     file: string
     content: string
   }[]                          // bounded exact-head context, delimited untrusted
+  relatedCodeContext: {
+    file: string
+    reason: string
+    content: string
+  }[]                          // one-hop exact-head context, delimited untrusted
 }
 ```
 
@@ -234,6 +239,15 @@ The worker estimates the assembled base prompt before retrieval and gives only
 the remaining token/byte capacity to full-file context. After retrieval, the
 final prompt is re-estimated and trailing context files are removed if prompt
 formatting overhead would exceed the combined budget.
+
+Feature 23 plans only one-hop local imports and conventionally colocated tests
+from a validated exact-head repository tree. Related candidates are
+deduplicated against changed/full-file context, ranked deterministically, and
+share the full-file byte, token, request, and timeout budgets. Related context
+is labeled with a trusted selection reason inside its own untrusted prompt
+section. Repository-tree status and related fetch counts are runtime-only
+aggregate metadata; paths, search results, prompts, and source content are
+never persisted.
 
 ---
 
@@ -475,15 +489,10 @@ strings and arrays receive explicit Zod length limits in the implementing
 feature. Candidate ids, finding-update ids, and issue numbers are checked
 against server-built allowlists after schema validation.
 
-### Planned prompt context additions (Features 23, 24, and 28–31)
+### Planned prompt context additions (Features 24 and 28–31)
 
 ```ts
 PromptContextV2 = PromptContext & {
-  relatedCodeContext: {
-    file: string
-    reason: string
-    content: string
-  }[]
   findingsToReevaluate: {
     id: string
     file: string

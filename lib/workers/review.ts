@@ -2,6 +2,7 @@ import { Receiver } from "@upstash/qstash";
 
 import {
   DAILY_REVIEW_CAP,
+  FULL_FILE_CONTEXT_TIMEOUT_MS,
   FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
   FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
   REVIEW_PROMPT_TOKEN_BUDGET,
@@ -22,19 +23,22 @@ import {
   fetchPrDiff,
   fetchPrHeadSha,
   fetchRepositoryFile,
+  fetchRepositoryTree,
   upsertComment,
+  type RepositoryTreeResult,
 } from "@/lib/github/client";
 import { processDiff } from "@/lib/review/diff";
 import { generateReview, ReviewFailedError } from "@/lib/review/generate";
 import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
+import { planRelatedCodeContext } from "@/lib/review/related-context";
 import {
   buildReviewPrompt,
   estimateReviewPromptTokens,
-  fitChangedFileContext,
+  fitContextToPromptBudget,
 } from "@/lib/review/prompt";
 import { renderReview } from "@/lib/review/render";
 import type { ReviewOutput } from "@/lib/review/schema";
-import { retrieveFullFileContext } from "./context";
+import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 
@@ -54,6 +58,7 @@ type GitHubClient = {
   fetchPrDiff: typeof fetchPrDiff;
   fetchInstructionsFile: typeof fetchInstructionsFile;
   fetchRepositoryFile: typeof fetchRepositoryFile;
+  fetchRepositoryTree: typeof fetchRepositoryTree;
   upsertComment: typeof upsertComment;
 };
 
@@ -120,6 +125,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       fetchPrDiff,
       fetchInstructionsFile,
       fetchRepositoryFile,
+      fetchRepositoryTree,
       upsertComment,
     },
     generateReview,
@@ -157,6 +163,32 @@ function emptyContextBudget(promptTokens: number) {
     totalTokenBudget: Math.min(FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT, availableTokens),
     totalByteBudget: Math.min(FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT, availableTokens * 4),
   };
+}
+
+function fetchRepositoryTreeWithinDeadline(
+  dependencies: ReviewWorkerDependencies,
+  job: ReviewJob,
+  deadline: number,
+): Promise<RepositoryTreeResult> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return Promise.resolve({ status: "unavailable" });
+  const controller = new AbortController();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      resolve({ status: "unavailable" });
+    }, remainingMs);
+    dependencies.github
+      .fetchRepositoryTree(job.installationId, job.repoFullName, job.headSha, controller.signal)
+      .then((result) => {
+        clearTimeout(timer);
+        resolve(result);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve({ status: "unavailable" });
+      });
+  });
 }
 
 async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies) {
@@ -211,21 +243,57 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       instructions,
       skippedFiles: processedDiff.skippedFiles,
     };
-    const basePrompt = buildReviewPrompt({ ...promptContext, changedFileContext: [] });
+    const basePrompt = buildReviewPrompt({
+      ...promptContext,
+      changedFileContext: [],
+      relatedCodeContext: [],
+    });
     const contextBudget = emptyContextBudget(estimateReviewPromptTokens(basePrompt));
-    const fullFileContext = await retrieveFullFileContext({
+    const contextDeadline = Date.now() + FULL_FILE_CONTEXT_TIMEOUT_MS;
+    const [fullFileContext, repositoryTree] = await Promise.all([
+      retrieveFullFileContext({
+        installationId: job.installationId,
+        repoFullName: job.repoFullName,
+        headSha: job.headSha,
+        files: processedDiff.files,
+        fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
+        ...contextBudget,
+        deadline: contextDeadline,
+      }),
+      contextBudget.totalByteBudget > 0 && contextBudget.totalTokenBudget > 0
+        ? fetchRepositoryTreeWithinDeadline(dependencies, job, contextDeadline)
+        : Promise.resolve({ status: "unavailable" as const }),
+    ]);
+    const relatedPlan = planRelatedCodeContext({
+      changedFiles: processedDiff.files,
+      fullFileContext: fullFileContext.files,
+      repositoryPaths: repositoryTree.status === "fetched" ? repositoryTree.paths : [],
+    });
+    const relatedCodeContext = await retrieveRelatedCodeContext({
       installationId: job.installationId,
       repoFullName: job.repoFullName,
       headSha: job.headSha,
-      files: processedDiff.files,
+      candidates: relatedPlan.candidates,
       fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
-      ...contextBudget,
+      totalByteBudget: Math.max(
+        0,
+        contextBudget.totalByteBudget - fullFileContext.metadata.suppliedBytes,
+      ),
+      totalTokenBudget: Math.max(
+        0,
+        contextBudget.totalTokenBudget - fullFileContext.metadata.suppliedTokens,
+      ),
+      deadline: contextDeadline,
     });
-    const changedFileContext = fitChangedFileContext(
-      { ...promptContext, changedFileContext: fullFileContext.files },
+    const fittedContext = fitContextToPromptBudget(
+      {
+        ...promptContext,
+        changedFileContext: fullFileContext.files,
+        relatedCodeContext: relatedCodeContext.files,
+      },
       REVIEW_PROMPT_TOKEN_BUDGET,
     );
-    const prompt = buildReviewPrompt({ ...promptContext, changedFileContext });
+    const prompt = buildReviewPrompt({ ...promptContext, ...fittedContext });
     const generated = await dependencies.generateReview(prompt, { model });
     const markdown = renderReview(generated.output, {
       filesReviewed: processedDiff.files.length,
@@ -256,7 +324,14 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       outputTokens: generated.usage.outputTokens,
       durationMs: generated.durationMs,
     });
-    return { status: "completed" as const, context: fullFileContext.metadata };
+    return {
+      status: "completed" as const,
+      context: {
+        fullFile: fullFileContext.metadata,
+        relatedCode: relatedCodeContext.metadata,
+        repositoryTree: repositoryTree.status,
+      },
+    };
   } catch (error) {
     await dependencies.queries.markReviewFailed(
       job.installationId,

@@ -73,6 +73,13 @@
   remaining combined prompt budget for changed-file context; after retrieval,
   it re-estimates the final prompt and drops trailing context files when
   formatting overhead would exceed the combined budget.
+- Feature 23 builds a pure one-hop planner from changed-file imports and
+  conventionally colocated tests against a validated exact-head repository
+  tree. It ignores aliases, dynamic imports, generated paths, ambiguous
+  resolutions, and consumer search unless a future bounded search can prove a
+  unique match; symlink entries are excluded. Related retrieval uses the same
+  installation, head SHA, byte/token budget, request cap, and deadline as
+  full-file context.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

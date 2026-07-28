@@ -7,7 +7,10 @@ import {
   selectFullFileContext,
   validateFullFileContent,
 } from "@/lib/review/context";
-import { retrieveFullFileContext } from "@/lib/workers/context";
+import {
+  retrieveFullFileContext,
+  retrieveRelatedCodeContext,
+} from "@/lib/workers/context";
 
 const hunk = (path: string) => ({
   path,
@@ -129,6 +132,31 @@ describe("full-file context", () => {
     expect(result.files).toEqual([]);
     expect(result.metadata.missReasons.truncated).toBe(1);
     expect(result.metadata.missReasons.unsupported).toBe(0);
+  });
+
+  it("retrieves related candidates with reasons under the shared budget", async () => {
+    const result = await retrieveRelatedCodeContext({
+      installationId: 42,
+      repoFullName: "owner/repo",
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      candidates: [{ file: "src/security/check.ts", reasons: ["direct_import"] }],
+      fetchRepositoryFile: vi.fn().mockResolvedValue({
+        status: "fetched",
+        content: "export const check = true;",
+        byteLength: 26,
+      }),
+      totalByteBudget: 26,
+      totalTokenBudget: 7,
+    });
+
+    expect(result.files).toEqual([
+      {
+        file: "src/security/check.ts",
+        reason: "direct_import",
+        content: "export const check = true;",
+      },
+    ]);
+    expect(result.metadata.suppliedBytes).toBe(26);
   });
 
   it("creates zeroed safe metadata", () => {
