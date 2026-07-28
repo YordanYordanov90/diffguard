@@ -16,6 +16,7 @@ import {
   fetchInstructionsFile,
   fetchPrDiff,
   fetchPrHeadSha,
+  fetchRepositoryFile,
   upsertComment,
 } from "@/lib/github/client";
 import { processDiff } from "@/lib/review/diff";
@@ -24,6 +25,7 @@ import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
 import { buildReviewPrompt } from "@/lib/review/prompt";
 import { renderReview } from "@/lib/review/render";
 import type { ReviewOutput } from "@/lib/review/schema";
+import { retrieveFullFileContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 
@@ -42,6 +44,7 @@ type GitHubClient = {
   fetchPrHeadSha: typeof fetchPrHeadSha;
   fetchPrDiff: typeof fetchPrDiff;
   fetchInstructionsFile: typeof fetchInstructionsFile;
+  fetchRepositoryFile: typeof fetchRepositoryFile;
   upsertComment: typeof upsertComment;
 };
 
@@ -103,7 +106,13 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         return markReviewFailed(...args);
       },
     },
-    github: { fetchPrHeadSha, fetchPrDiff, fetchInstructionsFile, upsertComment },
+    github: {
+      fetchPrHeadSha,
+      fetchPrDiff,
+      fetchInstructionsFile,
+      fetchRepositoryFile,
+      upsertComment,
+    },
     generateReview,
   };
 }
@@ -177,6 +186,13 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     if (!model) throw new Error("Installation model configuration is missing.");
 
     const processedDiff = processDiff(rawDiff);
+    const fullFileContext = await retrieveFullFileContext({
+      installationId: job.installationId,
+      repoFullName: job.repoFullName,
+      headSha: job.headSha,
+      files: processedDiff.files,
+      fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
+    });
     const prompt = buildReviewPrompt({
       prTitle: job.prTitle,
       prBody: job.prBody,
@@ -184,6 +200,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       diff: processedDiff.diff,
       instructions,
       skippedFiles: processedDiff.skippedFiles,
+      changedFileContext: fullFileContext.files,
     });
     const generated = await dependencies.generateReview(prompt, { model });
     const markdown = renderReview(generated.output, {
@@ -215,7 +232,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       outputTokens: generated.usage.outputTokens,
       durationMs: generated.durationMs,
     });
-    return { status: "completed" as const };
+    return { status: "completed" as const, context: fullFileContext.metadata };
   } catch (error) {
     await dependencies.queries.markReviewFailed(
       job.installationId,
@@ -266,4 +283,3 @@ export async function handleReviewWorker(
 export function createReviewWorkerDependencies() {
   return createDefaultDependencies();
 }
-

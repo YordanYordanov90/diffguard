@@ -85,7 +85,7 @@ function isExcluded(file: DiffFile): boolean {
   );
 }
 
-function riskRank(file: DiffFile): number {
+export function riskRank(file: DiffFile): number {
   const path = file.path.toLowerCase();
   const segments = path.split("/");
   const basename = segments.at(-1) ?? "";

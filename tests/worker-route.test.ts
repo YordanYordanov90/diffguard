@@ -43,6 +43,7 @@ function createDependencies(
       fetchPrHeadSha: vi.fn().mockResolvedValue(headSha),
       fetchPrDiff: vi.fn().mockResolvedValue(""),
       fetchInstructionsFile: vi.fn().mockResolvedValue(null),
+      fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
       upsertComment: vi.fn().mockResolvedValue(9001),
       ...githubOverrides,
     },
