@@ -30,6 +30,7 @@ import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
 import {
   buildReviewPrompt,
   estimateReviewPromptTokens,
+  fitChangedFileContext,
 } from "@/lib/review/prompt";
 import { renderReview } from "@/lib/review/render";
 import type { ReviewOutput } from "@/lib/review/schema";
@@ -202,15 +203,15 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     if (!model) throw new Error("Installation model configuration is missing.");
 
     const processedDiff = processDiff(rawDiff);
-    const basePrompt = buildReviewPrompt({
+    const promptContext = {
       prTitle: job.prTitle,
       prBody: job.prBody,
       fileTree: processedDiff.fileTree,
       diff: processedDiff.diff,
       instructions,
       skippedFiles: processedDiff.skippedFiles,
-      changedFileContext: [],
-    });
+    };
+    const basePrompt = buildReviewPrompt({ ...promptContext, changedFileContext: [] });
     const contextBudget = emptyContextBudget(estimateReviewPromptTokens(basePrompt));
     const fullFileContext = await retrieveFullFileContext({
       installationId: job.installationId,
@@ -220,15 +221,11 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
       ...contextBudget,
     });
-    const prompt = buildReviewPrompt({
-      prTitle: job.prTitle,
-      prBody: job.prBody,
-      fileTree: processedDiff.fileTree,
-      diff: processedDiff.diff,
-      instructions,
-      skippedFiles: processedDiff.skippedFiles,
-      changedFileContext: fullFileContext.files,
-    });
+    const changedFileContext = fitChangedFileContext(
+      { ...promptContext, changedFileContext: fullFileContext.files },
+      REVIEW_PROMPT_TOKEN_BUDGET,
+    );
+    const prompt = buildReviewPrompt({ ...promptContext, changedFileContext });
     const generated = await dependencies.generateReview(prompt, { model });
     const markdown = renderReview(generated.output, {
       filesReviewed: processedDiff.files.length,

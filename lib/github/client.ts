@@ -7,6 +7,10 @@ import {
   parseAccessibleInstallations,
   type AccessibleInstallation,
 } from "./accessible-installation";
+import {
+  isSafeRepositoryPath,
+  normalizeRepositoryPath,
+} from "../repository/path";
 
 export type { AccessibleInstallation } from "./accessible-installation";
 
@@ -82,16 +86,6 @@ function isUnsupportedInstructionResponse(error: unknown) {
   return (
     error instanceof RequestError &&
     [403, 413, 422].includes(error.status)
-  );
-}
-
-function isSafeRepositoryPath(path: string) {
-  const normalized = path.replaceAll("\\", "/");
-  return (
-    normalized.length > 0 &&
-    !normalized.startsWith("/") &&
-    !normalized.includes("\0") &&
-    !normalized.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   );
 }
 
@@ -221,7 +215,7 @@ export function createGitHubClient(
           {
             owner,
             repo,
-            path: path.replaceAll("\\", "/"),
+            path: normalizeRepositoryPath(path),
             ref,
             ...(signal ? { request: { signal } } : {}),
           },

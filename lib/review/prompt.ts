@@ -19,6 +19,22 @@ export function estimateReviewPromptTokens(prompt: ReviewPrompt): number {
   return estimateContextTokens(`${prompt.system}\n${prompt.user}`);
 }
 
+export function fitChangedFileContext(
+  context: PromptContext,
+  tokenBudget: number,
+): FullFileContext[] {
+  if (!Number.isInteger(tokenBudget) || tokenBudget < 0) {
+    throw new Error("tokenBudget must be a non-negative integer.");
+  }
+  let files = context.changedFileContext;
+  while (files.length > 0) {
+    const prompt = buildReviewPrompt({ ...context, changedFileContext: files });
+    if (estimateReviewPromptTokens(prompt) <= tokenBudget) return files;
+    files = files.slice(0, -1);
+  }
+  return files;
+}
+
 const SYSTEM_PROMPT = `You are DiffGuard, an expert pull request reviewer.
 
 Perform a general code review with a strong security emphasis. Treat security findings as first-class findings and prioritize them when multiple issues are present. Review only the pull request context provided by the user message.

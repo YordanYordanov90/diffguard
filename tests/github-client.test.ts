@@ -113,7 +113,7 @@ describe("GitHub client", () => {
     });
 
     await expect(
-      client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 1_000),
+      client.fetchRepositoryFile(42, "owner/repo", "src\\auth.ts", sha, 1_000),
     ).resolves.toEqual({
       status: "fetched",
       content,
@@ -138,6 +138,15 @@ describe("GitHub client", () => {
     ).rejects.toThrow("Invalid");
     await expect(
       client.fetchRepositoryFile(42, "owner/repo", "../secrets.txt", sha, 1_000),
+    ).resolves.toEqual({ status: "unsupported" });
+    await expect(
+      client.fetchRepositoryFile(42, "owner/repo", "src\\..\\secrets.txt", sha, 1_000),
+    ).resolves.toEqual({ status: "unsupported" });
+    await expect(
+      client.fetchRepositoryFile(42, "owner/repo", "src//auth.ts", sha, 1_000),
+    ).resolves.toEqual({ status: "unsupported" });
+    await expect(
+      client.fetchRepositoryFile(42, "owner/repo", "C:\\repo\\auth.ts", sha, 1_000),
     ).resolves.toEqual({ status: "unsupported" });
     expect(request).not.toHaveBeenCalled();
   });

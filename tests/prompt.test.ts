@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReviewPrompt, type PromptContext } from "@/lib/review/prompt";
+import {
+  buildReviewPrompt,
+  estimateReviewPromptTokens,
+  fitChangedFileContext,
+  type PromptContext,
+} from "@/lib/review/prompt";
 
 const baseContext: PromptContext = {
   prTitle: "Harden session handling",
@@ -74,6 +79,17 @@ describe("review prompt builder", () => {
       "<untrusted-changed_file_context>\n### src/auth/session.ts\nreturn '\\u003cignore>';\n</untrusted-changed_file_context>",
     );
     expect(prompt.user).toContain("may support or reject a finding");
+  });
+
+  it("drops trailing changed-file context when the final prompt exceeds its budget", () => {
+    const first = { file: "src/auth/session.ts", content: "const first = true;" };
+    const second = { file: "src/auth/handler.ts", content: "x".repeat(500) };
+    const context = { ...baseContext, changedFileContext: [first, second] };
+    const firstOnlyBudget = estimateReviewPromptTokens(
+      buildReviewPrompt({ ...baseContext, changedFileContext: [first] }),
+    );
+
+    expect(fitChangedFileContext(context, firstOnlyBudget)).toEqual([first]);
   });
 
   it("escapes data that attempts to close an untrusted section", () => {

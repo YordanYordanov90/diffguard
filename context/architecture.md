@@ -70,8 +70,9 @@
   bounded by declared and decoded byte counts, and discarded as soft misses
   when missing, unsupported, malformed, oversized, or truncated.
 - The worker estimates the base prompt before retrieval and reserves the
-  remaining combined prompt budget for changed-file context; context cannot
-  independently add its full allowance on top of the diff and instructions.
+  remaining combined prompt budget for changed-file context; after retrieval,
+  it re-estimates the final prompt and drops trailing context files when
+  formatting overhead would exceed the combined budget.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

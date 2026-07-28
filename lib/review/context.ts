@@ -3,6 +3,10 @@ import {
   FULL_FILE_CONTEXT_FILE_TOKEN_LIMIT,
   FULL_FILE_CONTEXT_MAX_FILES,
 } from "@/lib/config/constants";
+import {
+  isSafeRepositoryPath,
+  normalizeRepositoryPath,
+} from "@/lib/repository/path";
 
 import { riskRank, type DiffFile } from "./diff";
 
@@ -53,23 +57,13 @@ const GENERATED_SEGMENTS = new Set([
   "third_party", "vendor", "vendors", "bower_components",
 ]);
 
-function normalizePath(path: string): string {
-  return path.replaceAll("\\", "/");
-}
-
 export function isSafeContextPath(path: string): boolean {
-  const normalized = normalizePath(path);
-  return (
-    normalized.length > 0 &&
-    !normalized.startsWith("/") &&
-    !normalized.includes("\0") &&
-    !normalized.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-  );
+  return isSafeRepositoryPath(path);
 }
 
 export function isUnsupportedContextPath(path: string): boolean {
   if (!isSafeContextPath(path)) return true;
-  const normalized = normalizePath(path).toLowerCase();
+  const normalized = normalizeRepositoryPath(path).toLowerCase();
   const segments = normalized.split("/");
   const basename = segments.at(-1) ?? "";
   const extension = basename.includes(".") ? basename.split(".").at(-1) : undefined;
@@ -93,7 +87,7 @@ function candidateReasons(
   const reasons: FullFileContextReason[] = [];
   if (riskRank(file) === 0) reasons.push("security_sensitive");
   if (hasIncompleteHunk(file.patch)) reasons.push("incomplete_hunk");
-  if (candidateFiles.has(normalizePath(file.path))) reasons.push("candidate_finding");
+  if (candidateFiles.has(normalizeRepositoryPath(file.path))) reasons.push("candidate_finding");
   return reasons;
 }
 
@@ -112,13 +106,13 @@ export function selectFullFileContext(
 ): FullFileContextSelection {
   const maxFiles = options.maxFiles ?? FULL_FILE_CONTEXT_MAX_FILES;
   validateLimit("maxFiles", maxFiles);
-  const candidateFiles = new Set((options.candidateFiles ?? []).map(normalizePath));
+  const candidateFiles = new Set((options.candidateFiles ?? []).map(normalizeRepositoryPath));
   const candidates = files
     .map((file, index) => ({ file, index, reasons: candidateReasons(file, candidateFiles) }))
     .filter(({ file, reasons }) => reasons.length > 0 && !isUnsupportedContextPath(file.path))
     .sort((left, right) => riskRank(left.file) - riskRank(right.file) || left.index - right.index)
     .slice(0, maxFiles)
-    .map(({ file, reasons }) => ({ file: normalizePath(file.path), reasons }));
+    .map(({ file, reasons }) => ({ file: normalizeRepositoryPath(file.path), reasons }));
 
   return { candidates };
 }

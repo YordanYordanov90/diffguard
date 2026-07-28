@@ -45,6 +45,10 @@ describe("full-file context", () => {
 
   it("rejects unsafe, generated, and binary paths", () => {
     expect(isSafeContextPath("src/auth.ts")).toBe(true);
+    expect(isSafeContextPath("src\\auth.ts")).toBe(true);
+    expect(isSafeContextPath("src\\..\\secrets.txt")).toBe(false);
+    expect(isSafeContextPath("src//auth.ts")).toBe(false);
+    expect(isSafeContextPath("C:\\repo\\auth.ts")).toBe(false);
     expect(isSafeContextPath("../secrets.txt")).toBe(false);
     expect(isUnsupportedContextPath("dist/app.js")).toBe(true);
     expect(isUnsupportedContextPath("src/icon.png")).toBe(true);
@@ -111,6 +115,20 @@ describe("full-file context", () => {
     expect(result.files).toEqual([]);
     expect(result.metadata.missReasons.over_budget).toBe(1);
     expect(fetchRepositoryFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps truncated fetches distinct from unsupported misses", async () => {
+    const result = await retrieveFullFileContext({
+      installationId: 42,
+      repoFullName: "owner/repo",
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      files: [hunk("src/auth/session.ts")],
+      fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "truncated" }),
+    });
+
+    expect(result.files).toEqual([]);
+    expect(result.metadata.missReasons.truncated).toBe(1);
+    expect(result.metadata.missReasons.unsupported).toBe(0);
   });
 
   it("creates zeroed safe metadata", () => {

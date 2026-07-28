@@ -231,7 +231,9 @@ budget → remainder goes to `skippedFiles`.
 Feature 22 reserves a combined `REVIEW_PROMPT_TOKEN_BUDGET` for the diff,
 repository instructions, prompt structure, and bounded changed-file context.
 The worker estimates the assembled base prompt before retrieval and gives only
-the remaining token/byte capacity to full-file context.
+the remaining token/byte capacity to full-file context. After retrieval, the
+final prompt is re-estimated and trailing context files are removed if prompt
+formatting overhead would exceed the combined budget.
 
 ---
 
