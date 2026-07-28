@@ -25,7 +25,7 @@ export default async function DashboardLayout({
 function OnboardingHeader() {
   return (
     <header className="border-b border-border-default bg-bg-surface/90">
-      <div className="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
         <span className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-md border border-border-default bg-bg-raised">
             <Shield className="h-4 w-4 text-accent-primary" aria-hidden />

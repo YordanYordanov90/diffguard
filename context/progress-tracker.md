@@ -5,14 +5,14 @@ Update this file after every meaningful implementation change.
 ## Current Phase
 
 - Phase 1 core pipeline and dashboard foundation are complete.
-- Dashboard operations expansion (Features 18–20) is implemented.
-- Review-quality expansion is specified as Features 22–34; implementation has
-  not started.
+- Dashboard operations expansion (Features 18–21) is implemented.
+- Review-quality expansion is specified as Features 22–34; Feature 22 is in
+  progress.
 
 ## Current Goal
 
 - Install `diffguard-dev` on the owner's real repositories, dogfood the
-  expanded dashboard, then invite 4–5 beta users.
+  refined dashboard, then invite 4–5 beta users.
 
 ## Completed
 
@@ -188,6 +188,23 @@ Update this file after every meaningful implementation change.
   reconciliation, linked-issue validation, governed learnings, and final
   PR-scoped chat into verifiable increments. PR #38 at `3dfdbfb` is captured
   as a required false-positive regression case. No application code changed.
+- Feature 21 dashboard UI refinement specification — completed 2026-07-26
+  (documentation only): Signal is established as a reference for dark
+  operational clarity while DiffGuard retains its restrained status semantics
+  and coverage-rail identity. The spec covers the shell, protection summary,
+  stronger rail structure, shared table rhythm, responsive states, and visual
+  verification without data, schema, security-boundary, or pipeline changes.
+- Feature 21 (Dashboard UI refinement) — completed 2026-07-26:
+  Sidebar active route uses a slim left accent rail with quiet raised
+  background (no trailing status dot). Overview uses a compact Protection
+  summary strip (not four stat cards), continuous coverage rail with
+  installation nodes and repository connectors, one View all reviews action,
+  and shared panel/header density for recent reviews. Repositories inventory
+  reuses the same CoverageRail with Manage/View/Open actions. Reviews table
+  matches panel rhythm with mobile two-line rows; loading skeletons mirror
+  final geometry; empty/error states are compact and directional. Lint, all
+  89 Vitest tests, and production build pass. Manual visual check at 320px
+  through wide desktop remains recommended before dogfooding.
 
 ## In Progress
 
@@ -200,8 +217,8 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-1. Install `diffguard-dev` on owner's real repositories, dogfood the expanded
-   dashboard, then invite 4–5 beta users.
+1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
+   dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
 2. Implement the review-quality roadmap in dependency order:
    - Features 22–23: smart full-file and related-code context;
    - Feature 24: independent finding evidence/false-positive adjudication;
@@ -264,7 +281,9 @@ Update this file after every meaningful implementation change.
   by Overview, Reviews, and Repositories. Desktop uses a persistent sidebar;
   mobile uses a compact top bar and Sheet navigation. The signature coverage
   rail makes installation/repository protection visible without generic
-  analytics decoration.
+  analytics decoration. Feature 21 refines this with Signal-inspired
+  operational density and hierarchy while explicitly rejecting terminal
+  imitation, neon decoration, and chart-led layouts.
 - Repository access: GitHub owns `All repositories` versus
   `Selected repositories`. DiffGuard validates and displays GitHub installation
   metadata and opens the installation's GitHub configuration URL; it never
