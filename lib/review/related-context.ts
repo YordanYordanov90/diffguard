@@ -20,6 +20,7 @@ export type RelatedCodePlan = {
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"];
 const TEST_SUFFIXES = [".test", ".spec"];
+const STATIC_IMPORT_PATTERN = /^(?:import\s+(?:type\s+)?(?:[^'\"]+\s+from\s+)?|export\s+[^'\"]+\s+from\s+)["']([^"']+)["']/;
 
 function isTestPath(path: string): boolean {
   return path.split("/").some((segment) =>
@@ -35,21 +36,30 @@ function isPublicContract(content: string): boolean {
 
 function extractLocalImports(content: string): string[] {
   const imports = new Set<string>();
-  const lines = content.includes("diff --git ")
+  const lines = (content.includes("diff --git ")
     ? content
         .split("\n")
         .filter((line) => !line.startsWith("-"))
         .map((line) => (line.startsWith("+") && !line.startsWith("+++") ? line.slice(1) : line))
-    : content.split("\n");
+    : content.split("\n"));
+  let declarationLines: string[] = [];
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
-    const declaration = trimmed.match(
-      /^(?:import\s+(?:type\s+)?(?:[^'\"]+?\s+from\s+)?|export\s+[^'\"]+?\s+from\s+)["']([^"']+)["']/, 
-    );
-    const required = trimmed.match(/\brequire\(["']([^"']+)["']\)/);
-    const specifier = declaration?.[1] ?? required?.[1];
+    const startsStaticDeclaration = /^(?:import\s|export\s)/.test(trimmed);
+    if (declarationLines.length === 0 && !startsStaticDeclaration) {
+      const required = trimmed.match(/\brequire\(["']([^"']+)["']\)/);
+      if (required?.[1]?.startsWith(".")) imports.add(required[1]);
+      continue;
+    }
+    if (declarationLines.length === 0 && trimmed.startsWith("import(")) continue;
+    declarationLines.push(trimmed);
+    const declaration = declarationLines.join(" ").match(STATIC_IMPORT_PATTERN);
+    const specifier = declaration?.[1];
     if (specifier?.startsWith(".")) imports.add(specifier);
+    if (declaration || trimmed.endsWith(";") || declarationLines.length >= 8) {
+      declarationLines = [];
+    }
   }
   return [...imports];
 }
@@ -119,10 +129,17 @@ export function planRelatedCodeContext(params: {
   fullFileContext: FullFileContext[];
   repositoryPaths: string[];
   maxFiles?: number;
+  requestBudget?: number;
 }): RelatedCodePlan {
   const maxFiles = params.maxFiles ?? RELATED_CODE_CONTEXT_MAX_FILES;
-  if (!Number.isInteger(maxFiles) || maxFiles < 0) {
-    throw new Error("maxFiles must be a non-negative integer.");
+  const requestBudget = params.requestBudget ?? maxFiles;
+  if (
+    !Number.isInteger(maxFiles) ||
+    maxFiles < 0 ||
+    !Number.isInteger(requestBudget) ||
+    requestBudget < 0
+  ) {
+    throw new Error("maxFiles and requestBudget must be non-negative integers.");
   }
   const repositoryPaths = new Set(
     params.repositoryPaths
@@ -159,6 +176,6 @@ export function planRelatedCodeContext(params: {
     candidates: [...candidates.entries()]
       .map(([file, reasons]) => ({ file, reasons: [...reasons].sort() }))
       .sort((left, right) => candidateScore(left) - candidateScore(right) || left.file.localeCompare(right.file))
-      .slice(0, maxFiles),
+      .slice(0, Math.min(maxFiles, requestBudget)),
   };
 }

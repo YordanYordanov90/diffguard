@@ -5,6 +5,7 @@ import {
   FULL_FILE_CONTEXT_TIMEOUT_MS,
   FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
   FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
+  REVIEW_CONTEXT_MAX_FETCHES,
   REVIEW_PROMPT_TOKEN_BUDGET,
 } from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
@@ -268,6 +269,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       changedFiles: processedDiff.files,
       fullFileContext: fullFileContext.files,
       repositoryPaths: repositoryTree.status === "fetched" ? repositoryTree.paths : [],
+      requestBudget: Math.max(0, REVIEW_CONTEXT_MAX_FETCHES - fullFileContext.requestCount),
     });
     const relatedCodeContext = await retrieveRelatedCodeContext({
       installationId: job.installationId,
@@ -329,6 +331,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       context: {
         fullFile: fullFileContext.metadata,
         relatedCode: relatedCodeContext.metadata,
+        requestCount: fullFileContext.requestCount + relatedCodeContext.requestCount,
         repositoryTree: repositoryTree.status,
       },
     };

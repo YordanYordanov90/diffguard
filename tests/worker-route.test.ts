@@ -204,6 +204,42 @@ describe("review worker route", () => {
     );
   });
 
+  it("does not exceed the shared context request cap", async () => {
+    const rawDiff = Array.from(
+      { length: 8 },
+      (_, index) =>
+        `diff --git a/src/file${index}.ts b/src/file${index}.ts\n@@ -1 +1 @@\n-old\n+import "./related";`,
+    ).join("\n");
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(rawDiff),
+      fetchRepositoryTree: vi.fn().mockResolvedValue({
+        status: "fetched",
+        paths: [
+          ...Array.from({ length: 8 }, (_, index) => `src/file${index}.ts`),
+          "src/related.ts",
+        ],
+      }),
+      fetchRepositoryFile: vi.fn().mockResolvedValue({
+        status: "fetched",
+        content: 'import "./related";',
+        byteLength: 20,
+      }),
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchRepositoryFile).toHaveBeenCalledTimes(8);
+    expect(dependencies.github.fetchRepositoryFile).not.toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      "src/related.ts",
+      expect.any(String),
+      expect.any(Number),
+      expect.any(AbortSignal),
+    );
+  });
+
   it("reuses the latest completed review comment for a new head SHA", async () => {
     const dependencies = createDependencies({
       getLatestReviewCommentId: vi.fn().mockResolvedValue(812),

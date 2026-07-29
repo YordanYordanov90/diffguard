@@ -34,6 +34,7 @@ type ContextBudget = {
 export type RetrievedFullFileContext = {
   files: FullFileContext[];
   metadata: FullFileContextMetadata;
+  requestCount: number;
 };
 
 export type RelatedCodeContext = FullFileContext & { reason: string };
@@ -41,6 +42,7 @@ export type RelatedCodeContext = FullFileContext & { reason: string };
 export type RetrievedRelatedCodeContext = {
   files: RelatedCodeContext[];
   metadata: FullFileContextMetadata;
+  requestCount: number;
 };
 
 function addMiss(metadata: FullFileContextMetadata, reason: FullFileContextMissReason) {
@@ -167,6 +169,7 @@ async function retrieveContextCandidates(params: {
 }): Promise<RetrievedFullFileContext> {
   const metadata = createFullFileContextMetadata(params.candidates.length);
   const context: FullFileContext[] = [];
+  let requestCount = 0;
   const deadline = params.deadline ?? Date.now() + FULL_FILE_CONTEXT_TIMEOUT_MS;
   const budget = {
     totalByteLimit: params.totalByteBudget ?? FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
@@ -179,6 +182,11 @@ async function retrieveContextCandidates(params: {
       addMiss(metadata, "timeout");
       continue;
     }
+    if (budget.totalByteLimit <= 0 || budget.totalTokenLimit <= 0) {
+      addMiss(metadata, "over_budget");
+      continue;
+    }
+    requestCount += 1;
     const result = await retrieveCandidate({
       fetchRepositoryFile: params.fetchRepositoryFile,
       installationId: params.installationId,
@@ -199,7 +207,7 @@ async function retrieveContextCandidates(params: {
     metadata.suppliedTokens += result.tokens;
   }
 
-  return { files: context, metadata };
+  return { files: context, metadata, requestCount };
 }
 
 export async function retrieveFullFileContext(params: {
@@ -240,5 +248,6 @@ export async function retrieveRelatedCodeContext(params: {
       reason: reasons.get(file.file)?.join(", ") ?? "related code",
     })),
     metadata: result.metadata,
+    requestCount: result.requestCount,
   };
 }

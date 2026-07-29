@@ -35,6 +35,28 @@ describe("related code context planning", () => {
     ]);
   });
 
+  it("resolves multiline static imports but ignores dynamic imports", () => {
+    const result = planRelatedCodeContext({
+      changedFiles: [changedFile("src/app.ts", "" )],
+      fullFileContext: [
+        {
+          file: "src/app.ts",
+          content: [
+            "import {",
+            "  check,",
+            '} from "./security/check";',
+            'const lazy = import("./dynamic");',
+          ].join("\n"),
+        },
+      ],
+      repositoryPaths: ["src/app.ts", "src/security/check.ts", "src/dynamic.ts"],
+    });
+
+    expect(result.candidates).toEqual([
+      { file: "src/security/check.ts", reasons: ["direct_import"] },
+    ]);
+  });
+
   it("rejects aliases, dynamic imports, traversal, generated paths, and ambiguity", () => {
     const result = planRelatedCodeContext({
       changedFiles: [
@@ -86,5 +108,16 @@ describe("related code context planning", () => {
     expect(result.candidates).toEqual([
       { file: "src/db/store.ts", reasons: ["direct_import"] },
     ]);
+  });
+
+  it("respects the remaining request allowance", () => {
+    const result = planRelatedCodeContext({
+      changedFiles: [changedFile("src/app.ts", 'import "./security/check";')],
+      fullFileContext: [],
+      repositoryPaths: ["src/security/check.ts"],
+      requestBudget: 0,
+    });
+
+    expect(result.candidates).toEqual([]);
   });
 });
