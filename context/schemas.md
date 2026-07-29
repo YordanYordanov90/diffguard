@@ -248,10 +248,17 @@ FindingCandidate = Finding & {
   suggestedChange:             SuggestedChange | null
 }
 
+FindingUpdate = {
+  findingId: string            // trusted allowlisted UUID only
+  status:    "open" | "resolved"
+  reason:    string
+}
+
 CandidateReviewOutput = {
   summary:    string
   verdict:    Verdict
   candidates: FindingCandidate[]
+  findingUpdates: FindingUpdate[]  // defaults to [] when no prior finding changes
 }
 
 FindingAdjudication = {
@@ -280,7 +287,10 @@ candidates become the publishable `ReviewOutput` and durable
 `review_findings` rows; rejected and manual-verification candidates never
 affect counts, output, or finding persistence. Malformed, missing, duplicate,
 or arbitrary adjudication ids confirm nothing for the affected candidate.
-Fingerprints are never accepted from the LLM.
+Fingerprints are never accepted from the LLM. Finding updates may reference
+only tenant/PR-scoped ids independently allowlisted from open findings whose
+file was touched by the incremental range; omitted or invalid updates preserve
+the existing finding as open.
 
 ## Webhook Boundary (Zod — validated after HMAC verification)
 
@@ -502,7 +512,7 @@ PRIMARY KEY (repository_id, pr_number)
 INDEX (installation_id, repository_id, pr_number)
 ```
 
-### Planned structured LLM contracts (Features 25–29 and 34)
+### Implemented inputs and planned LLM extensions (Features 29 and 34)
 
 ```ts
 SuggestedChange = {
@@ -524,6 +534,7 @@ CandidateReviewOutput = {
   summary:    string
   verdict:    Verdict
   candidates: FindingCandidate[]
+  findingUpdates: FindingUpdate[]
 }
 
 FindingAdjudication = {
@@ -579,17 +590,10 @@ strings and arrays receive explicit Zod length limits in the implementing
 feature. Candidate ids, finding-update ids, and issue numbers are checked
 against server-built allowlists after schema validation.
 
-### Planned prompt context additions (Features 24 and 28–31)
+### Planned prompt context additions (Features 29–31)
 
 ```ts
 PromptContextV2 = PromptContext & {
-  findingsToReevaluate: {
-    id: string
-    file: string
-    line: number | null
-    title: string
-    detail: string
-  }[]
   linkedIssues: {
     issueNumber: number
     title: string

@@ -23,6 +23,9 @@ import type {
   markReviewFailed,
   markReviewRunning,
   markReviewSkipped,
+  listOpenFindingsByPr,
+  markFindingResolutionReplied,
+  reconcileFindings,
   upsertConfirmedFindings,
 } from "@/lib/db/queries";
 import {
@@ -35,6 +38,7 @@ import {
   fetchRepositoryFile,
   fetchRepositoryTree,
   isCommitOnPullRequest,
+  replyToPullRequestReviewComment,
   upsertComment,
   type CommitComparisonResult,
   listPullRequestReviewComments,
@@ -71,6 +75,12 @@ import {
 } from "@/lib/review/evidence";
 import { toPersistableFindings } from "@/lib/review/fingerprint";
 import {
+  selectEligibleFindings,
+  selectResolvedFindingIds,
+  toFinding as toReconciledFinding,
+  type OpenFinding,
+} from "@/lib/review/reconciliation";
+import {
   planInlineComments,
   stripInlineSuggestions,
   type PreparedInlineComment,
@@ -82,6 +92,7 @@ import {
   adjudicationOutputSchema,
   type ConfirmedFinding,
   type FindingCandidate,
+  type FindingUpdate,
   type ReviewOutput,
 } from "@/lib/review/schema";
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
@@ -89,6 +100,7 @@ import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 type CompletedBaseline = Awaited<ReturnType<typeof getLatestCompletedReviewForPr>>;
 type StoredFinding = Awaited<ReturnType<typeof upsertConfirmedFindings>>[number];
+type StoredOpenFinding = Awaited<ReturnType<typeof listOpenFindingsByPr>>[number];
 type PublishedInlineReview = CreatePullRequestReviewResult & {
   comments: CreatedPullRequestReviewComment[];
 };
@@ -112,6 +124,16 @@ type ReviewQueries = {
   attachFindingGitHubCommentId: (
     ...args: Parameters<typeof attachFindingGitHubCommentId>
   ) => Promise<unknown>;
+  listOpenFindingsByPr: (
+    ...args: Parameters<typeof listOpenFindingsByPr>
+  ) => Promise<StoredOpenFinding[]>;
+  reconcileFindings: (...args: Parameters<typeof reconcileFindings>) => Promise<{
+    findings: StoredFinding[];
+    resolved: StoredOpenFinding[];
+  }>;
+  markFindingResolutionReplied: (
+    ...args: Parameters<typeof markFindingResolutionReplied>
+  ) => Promise<unknown>;
 };
 
 type GitHubClient = {
@@ -126,6 +148,7 @@ type GitHubClient = {
   upsertComment: typeof upsertComment;
   createPullRequestReview: typeof createPullRequestReview;
   listPullRequestReviewComments: typeof listPullRequestReviewComments;
+  replyToPullRequestReviewComment: typeof replyToPullRequestReviewComment;
 };
 
 type QStashVerifier = {
@@ -202,6 +225,18 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         const { attachFindingGitHubCommentId } = await import("@/lib/db/queries");
         return attachFindingGitHubCommentId(...args);
       },
+      async listOpenFindingsByPr(...args) {
+        const { listOpenFindingsByPr } = await import("@/lib/db/queries");
+        return listOpenFindingsByPr(...args);
+      },
+      async reconcileFindings(...args) {
+        const { reconcileFindings } = await import("@/lib/db/queries");
+        return reconcileFindings(...args);
+      },
+      async markFindingResolutionReplied(...args) {
+        const { markFindingResolutionReplied } = await import("@/lib/db/queries");
+        return markFindingResolutionReplied(...args);
+      },
     },
     github: {
       fetchPrHeadSha,
@@ -215,6 +250,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       upsertComment,
       createPullRequestReview,
       listPullRequestReviewComments,
+      replyToPullRequestReviewComment,
     },
     generateReview,
     adjudicateReview,
@@ -347,20 +383,43 @@ function severityCounts(review: ReviewOutput) {
   );
 }
 
-function candidateFindings(output: unknown): FindingCandidate[] {
+function parseCandidateOutput(output: unknown): {
+  candidates: FindingCandidate[];
+  findingUpdates: FindingUpdate[];
+} {
   const candidateOutput = candidateReviewOutputSchema.safeParse(output);
-  if (candidateOutput.success) return candidateOutput.data.candidates;
+  if (candidateOutput.success) return candidateOutput.data;
   const legacyOutput = reviewOutputSchema.safeParse(output);
-  if (!legacyOutput.success) return [];
-  return legacyOutput.data.findings.map((finding) => ({
-    ...finding,
-    confidence: "high" as const,
-    observedBehavior: "",
-    causalPath: "",
-    violatedInvariant: "",
-    requiresRuntimeVerification: false,
-    suggestedChange: null,
-  }));
+  if (!legacyOutput.success) return { candidates: [], findingUpdates: [] };
+  return {
+    candidates: legacyOutput.data.findings.map((finding) => ({
+      ...finding,
+      confidence: "high" as const,
+      observedBehavior: "",
+      causalPath: "",
+      violatedInvariant: "",
+      requiresRuntimeVerification: false,
+      suggestedChange: null,
+    })),
+    findingUpdates: [],
+  };
+}
+
+function toOpenFinding(finding: StoredOpenFinding): OpenFinding {
+  return {
+    id: finding.id,
+    file: finding.file,
+    line: finding.line,
+    title: finding.title,
+    detail: finding.detail,
+    severity: finding.severity,
+    category: finding.category,
+    suggestion: finding.suggestion,
+  };
+}
+
+function resolutionReplyBody(headSha: string): string {
+  return `✅ DiffGuard marked this finding resolved in \`${headSha.slice(0, 7)}\`.`;
 }
 
 function addUsage(
@@ -587,6 +646,17 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
 
     const reviewMode: ReviewMode = plan.mode;
     const processedDiff = processDiff(rawDiff);
+    const openFindings = reviewMode === "incremental"
+      ? await dependencies.queries.listOpenFindingsByPr(
+        job.installationId,
+        job.repositoryId,
+        job.prNumber,
+      )
+      : [];
+    const eligibleOpenFindings = selectEligibleFindings(
+      openFindings.map(toOpenFinding),
+      processedDiff.files,
+    );
     const promptContext = {
       prTitle: job.prTitle,
       prBody: job.prBody,
@@ -594,6 +664,13 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       diff: processedDiff.diff,
       instructions,
       skippedFiles: processedDiff.skippedFiles,
+      reconciliationFindings: eligibleOpenFindings.map((finding) => ({
+        id: finding.id,
+        file: finding.file,
+        line: finding.line,
+        title: finding.title,
+        detail: finding.detail.slice(0, 1_000),
+      })),
     };
     const basePrompt = buildReviewPrompt({
       ...promptContext,
@@ -648,7 +725,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     );
     const prompt = buildReviewPrompt({ ...promptContext, ...fittedContext });
     const generated = await dependencies.generateReview(prompt, { model }, { deadline: llmDeadline });
-    const generatedCandidates = candidateFindings(generated.output);
+    const generatedOutput = parseCandidateOutput(generated.output);
+    const generatedCandidates = generatedOutput.candidates;
     const prepared = prepareCandidates(generatedCandidates, processedDiff.files);
     let gatedReview = emptyGatedReview();
     let confirmedFindings: ConfirmedFinding[] = [];
@@ -704,9 +782,28 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       confirmedFindings,
       processedDiff.files,
     );
-    let storedFindings: StoredFinding[] = [];
-    if (persistableFindings.length > 0) {
-      const findingInputs: FindingUpsertInput[] = persistableFindings.map((finding) => ({
+    const reconfirmedFingerprints = new Set(
+      persistableFindings.map((finding) => finding.fingerprint),
+    );
+    const reconfirmedFindingIds = new Set(
+      openFindings
+        .filter((finding) => reconfirmedFingerprints.has(finding.fingerprint))
+        .map((finding) => finding.id),
+    );
+    const resolvedFindingIds = selectResolvedFindingIds(
+      generatedOutput.findingUpdates,
+      eligibleOpenFindings,
+    ).filter((id) => !reconfirmedFindingIds.has(id));
+    const persistenceHeadSha = await dependencies.github.fetchPrHeadSha(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    if (persistenceHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
+      await dependencies.queries.markReviewSkipped(job.installationId, review.id, "stale_sha");
+      return { status: "stale_sha" as const };
+    }
+    const findingInputs: FindingUpsertInput[] = persistableFindings.map((finding) => ({
         installationId: job.installationId,
         repositoryId: job.repositoryId,
         prNumber: job.prNumber,
@@ -726,8 +823,17 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         reviewId: review.id,
         headSha: job.headSha,
       }));
-      storedFindings = await dependencies.queries.upsertConfirmedFindings(findingInputs);
-    }
+    const reconciliation = findingInputs.length > 0 || resolvedFindingIds.length > 0
+      ? await dependencies.queries.reconcileFindings({
+        installationId: job.installationId,
+        repositoryId: job.repositoryId,
+        prNumber: job.prNumber,
+        headSha: job.headSha,
+        findingInputs,
+        resolvedFindingIds,
+      })
+      : { findings: [], resolved: [] };
+    const storedFindings = reconciliation.findings;
 
     const inlinePlan = planInlineComments(
       storedFindings.map((finding) => ({
@@ -787,6 +893,25 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       (finding) => !findingsWithInline.has(finding.id),
     ).length;
     const attachedInlineCount = attachedFindingIds.size;
+    const resolvedFindingIdSet = new Set(reconciliation.resolved.map((finding) => finding.id));
+    const openFindingIds = new Set(openFindings.map((finding) => finding.id));
+    const reconciliationMetadata = reviewMode === "incremental"
+      ? {
+        newFindings: storedFindings
+          .filter((finding) => finding.introducedReviewId === review.id)
+          .map(toReconciledFinding),
+        recurringFindings: storedFindings
+          .filter(
+            (finding) =>
+              finding.introducedReviewId !== review.id && !openFindingIds.has(finding.id),
+          )
+          .map(toReconciledFinding),
+        stillOpenFindings: openFindings
+          .filter((finding) => !resolvedFindingIdSet.has(finding.id))
+          .map(toReconciledFinding),
+        resolvedFindings: reconciliation.resolved.map(toReconciledFinding),
+      }
+      : undefined;
 
     const markdown = renderReview(gatedReview, {
       filesReviewed: processedDiff.files.length,
@@ -796,6 +921,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       comparedFromSha: plan.comparedFromSha,
       summaryOnlyFindingCount,
       inlineCommentCount: attachedInlineCount,
+      reconciliation: reconciliationMetadata,
     });
 
     // Re-check head immediately before publication (debounce resolution).
@@ -845,6 +971,26 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       outputTokens: totalUsage.outputTokens,
       durationMs: Date.now() - reviewStartedAt,
     });
+    for (const finding of reconciliation.resolved) {
+      if (finding.githubCommentId === null || finding.resolutionRepliedAt !== null) continue;
+      try {
+        await dependencies.github.replyToPullRequestReviewComment(
+          job.installationId,
+          job.repoFullName,
+          job.prNumber,
+          finding.githubCommentId,
+          resolutionReplyBody(job.headSha),
+        );
+        await dependencies.queries.markFindingResolutionReplied(
+          job.installationId,
+          job.repositoryId,
+          job.prNumber,
+          finding.id,
+        );
+      } catch {
+        // The summary is canonical; a later retry can safely attempt the reply.
+      }
+    }
     return {
       status: "completed" as const,
       reviewMode,

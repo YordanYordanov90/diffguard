@@ -114,6 +114,15 @@
   pre-publication guard. After GitHub accepts the review POST, comment-ID
   retrieval retries only its safe GET and never posts a duplicate review.
   Returned review-comment ids attach to Feature 25 finding rows once.
+- Feature 28 loads open tenant/PR findings only for incremental reviews and
+  supplies bounded, delimited prior model output for findings whose normalized
+  file path is touched by the range. Only those trusted ids can be marked
+  resolved; omitted, duplicate, or arbitrary ids preserve the finding as open.
+  Reconciliation batches reopened confirmed fingerprints and resolution updates
+  atomically, never reopens dismissed findings, renders new/still-open/resolved
+  outcomes, and replies once to an existing inline thread after a resolution.
+  The head is rechecked before durable reconciliation writes and again before
+  summary publication.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

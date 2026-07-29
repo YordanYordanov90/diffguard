@@ -27,6 +27,8 @@ export const findingDecisionSchema = z.enum([
 
 export const findingLifecycleSchema = z.enum(["open", "resolved", "dismissed"]);
 
+export const findingUpdateStatusSchema = z.enum(["open", "resolved"]);
+
 export const findingSchema = z.object({
   severity: severitySchema,
   category: categorySchema,
@@ -62,6 +64,11 @@ export const candidateReviewOutputSchema = z.object({
   summary: z.string().min(1).max(2_000),
   verdict: verdictSchema,
   candidates: z.array(findingCandidateSchema).max(50),
+  findingUpdates: z.array(z.object({
+    findingId: z.string().uuid(),
+    status: findingUpdateStatusSchema,
+    reason: z.string().min(1).max(1_000),
+  })).max(50).default([]),
 });
 
 export const findingAdjudicationSchema = z.object({
@@ -91,6 +98,8 @@ export type ReviewOutput = z.infer<typeof reviewOutputSchema>;
 export type FindingConfidence = z.infer<typeof findingConfidenceSchema>;
 export type FindingDecision = z.infer<typeof findingDecisionSchema>;
 export type FindingLifecycle = z.infer<typeof findingLifecycleSchema>;
+export type FindingUpdateStatus = z.infer<typeof findingUpdateStatusSchema>;
+export type FindingUpdate = z.infer<typeof candidateReviewOutputSchema>["findingUpdates"][number];
 export type SuggestedChange = z.infer<typeof suggestedChangeSchema>;
 export type FindingCandidate = z.infer<typeof findingCandidateSchema>;
 export type ConfirmedFinding = z.infer<typeof confirmedFindingSchema>;

@@ -321,9 +321,9 @@ export function createGitHubClient(
           throw new Error("GitHub returned an unexpected commit-range diff.");
         }
         return response.data;
-      } catch (error) {
-        if (isNotFound(error)) return null;
-        throw error;
+      } catch {
+        // The caller broadens to a full PR diff when an incremental range is unavailable.
+        return null;
       }
     },
 
@@ -498,6 +498,29 @@ export function createGitHubClient(
       return z.object({ id: z.number().int().positive() }).parse(response.data).id;
     },
 
+    /** Reply once to a prior inline finding when trusted reconciliation resolves it. */
+    async replyToPullRequestReviewComment(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      parentCommentId: number,
+      body: string,
+    ) {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      const response = await octokit.request(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+        {
+          owner,
+          repo,
+          pull_number: prNumber,
+          body,
+          in_reply_to: parentCommentId,
+        },
+      );
+      return z.object({ id: z.number().int().positive() }).parse(response.data).id;
+    },
+
     /** Submit one COMMENT review at the exact head SHA. */
     async createPullRequestReview(
       installationId: number,
@@ -626,6 +649,9 @@ export const githubClient = {
   ) => getDefaultClient().fetchRepositoryTree(...args),
   upsertComment: (...args: Parameters<GitHubClient["upsertComment"]>) =>
     getDefaultClient().upsertComment(...args),
+  replyToPullRequestReviewComment: (
+    ...args: Parameters<GitHubClient["replyToPullRequestReviewComment"]>
+  ) => getDefaultClient().replyToPullRequestReviewComment(...args),
   createPullRequestReview: (
     ...args: Parameters<GitHubClient["createPullRequestReview"]>
   ) => getDefaultClient().createPullRequestReview(...args),
@@ -647,6 +673,7 @@ export const {
   fetchRepositoryFile,
   fetchRepositoryTree,
   upsertComment,
+  replyToPullRequestReviewComment,
   createPullRequestReview,
   listPullRequestReviewComments,
   getUserInstallations,

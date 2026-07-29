@@ -271,6 +271,15 @@ Update this file after every meaningful implementation change.
   migration `0002_review_findings`; the incremental baseline was regenerated as
   migration `0003_curly_punisher`. A stale head now skips all publication so a
   superseded incremental review cannot post either inline or summary comments.
+- Feature 28 (Finding Reconciliation) — implementation completed 2026-07-29:
+  incremental reviews now load tenant/PR-scoped open findings, allowlist only
+  findings whose file is touched by the range, and accept bounded structured
+  open/resolved updates for those ids alone. Omitted or invalid updates remain
+  open; confirmed reoccurrences reopen resolved rows but never dismissed rows.
+  Reconciliation persists in one Neon batch, the summary separates new,
+  recurring, still-open, and resolved findings, and first resolutions reply to
+  their inline thread once. Range-fetch failures broaden to a full review, and
+  the worker rechecks the head before durable finding writes.
 
 ## In Progress
 

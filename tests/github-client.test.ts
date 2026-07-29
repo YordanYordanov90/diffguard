@@ -188,6 +188,17 @@ describe("GitHub client", () => {
     ).resolves.toEqual({ status: "unavailable" });
   });
 
+  it("treats an unavailable range diff as a full-review fallback signal", async () => {
+    const base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const { client, request } = createMockClient();
+    request.mockRejectedValueOnce(new Error("GitHub unavailable"));
+
+    await expect(
+      client.fetchCommitRangeDiff(42, "owner/repo", base, head),
+    ).resolves.toBeNull();
+  });
+
   it("fetches .aireview.md and truncates decoded instructions", async () => {
     const { client, request } = createMockClient();
 
@@ -337,6 +348,24 @@ describe("GitHub client", () => {
     expect(request).toHaveBeenCalledWith(
       "PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}",
       { owner: "owner", repo: "repo", comment_id: 501, body: "edited" },
+    );
+  });
+
+  it("replies to a resolved inline finding through the pull-request comment API", async () => {
+    const { client, request } = createMockClient();
+
+    await expect(
+      client.replyToPullRequestReviewComment(42, "owner/repo", 7, 7001, "Resolved."),
+    ).resolves.toBe(501);
+    expect(request).toHaveBeenCalledWith(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      {
+        owner: "owner",
+        repo: "repo",
+        pull_number: 7,
+        body: "Resolved.",
+        in_reply_to: 7001,
+      },
     );
   });
 

@@ -10,6 +10,12 @@ export type RenderMetadata = {
   /** When set and > 0, disclose that some findings have no inline comment. */
   summaryOnlyFindingCount?: number;
   inlineCommentCount?: number;
+  reconciliation?: {
+    newFindings: Finding[];
+    recurringFindings: Finding[];
+    stillOpenFindings: Finding[];
+    resolvedFindings: Finding[];
+  };
 };
 
 const severityRank: Record<Severity, number> = {
@@ -86,6 +92,9 @@ function renderSkippedFiles(skippedFiles: string[]): string {
 }
 
 export function renderReview(review: ReviewOutput, metadata: RenderMetadata): string {
+  if (metadata.reconciliation) {
+    return renderReconciledReview(review, metadata);
+  }
   const visibleFindings = review.findings.filter((finding) => !isCollapsedSeverity(finding));
   const collapsedFindings = review.findings.filter(isCollapsedSeverity);
   const securityFindings = visibleFindings.filter((finding) => finding.category === "security");
@@ -126,6 +135,33 @@ export function renderReview(review: ReviewOutput, metadata: RenderMetadata): st
     sections.push("", disclosure);
   }
 
+  const skippedFiles = renderSkippedFiles(metadata.skippedFiles);
+  if (skippedFiles) sections.push("", skippedFiles);
+  sections.push("", "---", renderFooter(metadata));
+  return sections.join("\n");
+}
+
+function renderReconciledReview(review: ReviewOutput, metadata: RenderMetadata): string {
+  const reconciliation = metadata.reconciliation;
+  const sections = [
+    "### 🛡️ DiffGuard Review",
+    "",
+    renderSummary(review, metadata.filesReviewed),
+    "",
+    `> ${review.summary}`,
+  ];
+  if (reconciliation.newFindings.length > 0) {
+    sections.push("", "## New findings", "", renderFindings(reconciliation.newFindings));
+  }
+  if (reconciliation.recurringFindings.length > 0) {
+    sections.push("", "## Recurring findings", "", renderFindings(reconciliation.recurringFindings));
+  }
+  if (reconciliation.stillOpenFindings.length > 0) {
+    sections.push("", "## Still open", "", renderFindings(reconciliation.stillOpenFindings));
+  }
+  if (reconciliation.resolvedFindings.length > 0) {
+    sections.push("", "## Resolved in this update", "", renderFindings(reconciliation.resolvedFindings));
+  }
   const skippedFiles = renderSkippedFiles(metadata.skippedFiles);
   if (skippedFiles) sections.push("", skippedFiles);
   sections.push("", "---", renderFooter(metadata));
