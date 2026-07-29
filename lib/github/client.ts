@@ -29,6 +29,10 @@ export type RepositoryFileResult =
   | { status: "fetched"; content: string; byteLength: number }
   | { status: "missing" | "unsupported" | "oversized" | "truncated" };
 
+export type RepositoryTreeResult =
+  | { status: "fetched"; paths: string[] }
+  | { status: "unavailable" | "truncated" };
+
 const fileResponseSchema = z.object({
   type: z.literal("file"),
   encoding: z.literal("base64"),
@@ -38,6 +42,17 @@ const fileResponseSchema = z.object({
 
 const pullResponseSchema = z.object({
   head: z.object({ sha: z.string().min(1) }),
+});
+
+const repositoryTreeResponseSchema = z.object({
+  truncated: z.boolean(),
+  tree: z.array(
+    z.object({
+      path: z.string(),
+      type: z.string(),
+      mode: z.string().optional(),
+    }),
+  ).max(20_000),
 });
 
 const repositoryShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
@@ -247,6 +262,51 @@ export function createGitHubClient(
       }
     },
 
+    async fetchRepositoryTree(
+      installationId: number,
+      repoFullName: string,
+      ref: string,
+      signal?: AbortSignal,
+    ): Promise<RepositoryTreeResult> {
+      repositoryShaSchema.parse(ref);
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",
+          {
+            owner,
+            repo,
+            tree_sha: ref,
+            recursive: "1",
+            ...(signal ? { request: { signal } } : {}),
+          },
+        );
+        const tree = repositoryTreeResponseSchema.safeParse(response.data);
+        if (!tree.success) return { status: "unavailable" };
+        if (tree.data.truncated) return { status: "truncated" };
+        return {
+          status: "fetched",
+          paths: tree.data.tree
+            .filter(
+              (entry) =>
+                entry.type === "blob" &&
+                entry.mode !== "120000" &&
+                isSafeRepositoryPath(entry.path),
+            )
+            .map((entry) => normalizeRepositoryPath(entry.path)),
+        };
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return { status: "unavailable" };
+        }
+        if (isNotFound(error) || isUnsupportedInstructionResponse(error)) {
+          return { status: "unavailable" };
+        }
+        throw error;
+      }
+    },
+
     async upsertComment(
       installationId: number,
       repoFullName: string,
@@ -309,6 +369,9 @@ export const githubClient = {
   fetchRepositoryFile: (
     ...args: Parameters<GitHubClient["fetchRepositoryFile"]>
   ) => getDefaultClient().fetchRepositoryFile(...args),
+  fetchRepositoryTree: (
+    ...args: Parameters<GitHubClient["fetchRepositoryTree"]>
+  ) => getDefaultClient().fetchRepositoryTree(...args),
   upsertComment: (...args: Parameters<GitHubClient["upsertComment"]>) =>
     getDefaultClient().upsertComment(...args),
   getUserInstallations: (
@@ -321,6 +384,7 @@ export const {
   fetchPrHeadSha,
   fetchInstructionsFile,
   fetchRepositoryFile,
+  fetchRepositoryTree,
   upsertComment,
   getUserInstallations,
 } = githubClient;

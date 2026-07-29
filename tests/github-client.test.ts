@@ -8,13 +8,19 @@ import {
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
 
-function createMockClient(instructionResponse: unknown = {
-  type: "file",
-  encoding: "base64",
-  content: Buffer.from("review instructions").toString("base64"),
-}) {
+function createMockClient(
+  instructionResponse: unknown = {
+    type: "file",
+    encoding: "base64",
+    content: Buffer.from("review instructions").toString("base64"),
+  },
+  treeResponse: unknown = { truncated: false, tree: [] },
+) {
     const request = vi.fn(
     (route: string, params?: { headers?: { accept?: string } }) => {
+    if (route.includes("/git/trees/")) {
+      return Promise.resolve({ data: treeResponse });
+    }
     if (route.includes("/contents/")) {
       return Promise.resolve({
         data: instructionResponse,
@@ -186,6 +192,36 @@ describe("GitHub client", () => {
     await expect(
       truncated.client.fetchRepositoryFile(42, "owner/repo", "src/auth.ts", sha, 1_000),
     ).resolves.toEqual({ status: "truncated" });
+  });
+
+  it("fetches only safe blob paths from the exact head tree", async () => {
+    const { client, request } = createMockClient(undefined, {
+      truncated: false,
+      tree: [
+        { path: "src/auth.ts", type: "blob" },
+        { path: "src/auth.test.ts", type: "blob" },
+        { path: "src", type: "tree" },
+        { path: "src/link.ts", type: "blob", mode: "120000" },
+        { path: "../secrets.txt", type: "blob" },
+      ],
+    });
+
+    await expect(client.fetchRepositoryTree(42, "owner/repo", sha)).resolves.toEqual({
+      status: "fetched",
+      paths: ["src/auth.ts", "src/auth.test.ts"],
+    });
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",
+      { owner: "owner", repo: "repo", tree_sha: sha, recursive: "1" },
+    );
+  });
+
+  it("treats a truncated repository tree as a soft miss", async () => {
+    const { client } = createMockClient(undefined, { truncated: true, tree: [] });
+
+    await expect(client.fetchRepositoryTree(42, "owner/repo", sha)).resolves.toEqual({
+      status: "truncated",
+    });
   });
 
   it("creates new comments and updates existing comments in place", async () => {

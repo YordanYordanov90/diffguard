@@ -44,6 +44,7 @@ function createDependencies(
       fetchPrDiff: vi.fn().mockResolvedValue(""),
       fetchInstructionsFile: vi.fn().mockResolvedValue(null),
       fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
+      fetchRepositoryTree: vi.fn().mockResolvedValue({ status: "fetched", paths: [] }),
       upsertComment: vi.fn().mockResolvedValue(9001),
       ...githubOverrides,
     },
@@ -156,6 +157,87 @@ describe("review worker route", () => {
     expect(response.status).toBe(200);
     expect(dependencies.github.fetchRepositoryFile).not.toHaveBeenCalled();
     expect(dependencies.generateReview).toHaveBeenCalled();
+  });
+
+  it("fetches one-hop related context at the exact head SHA", async () => {
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(
+        `diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-import old\n+import "./security/check";`,
+      ),
+      fetchRepositoryTree: vi.fn().mockResolvedValue({
+        status: "fetched",
+        paths: ["src/app.ts", "src/security/check.ts"],
+      }),
+      fetchRepositoryFile: vi.fn().mockImplementation((_installation, _repo, path) =>
+        path === "src/security/check.ts"
+          ? Promise.resolve({
+              status: "fetched",
+              content: "export const check = true;",
+              byteLength: 26,
+            })
+          : Promise.resolve({ status: "missing" }),
+      ),
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchRepositoryTree).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      headSha,
+      expect.any(AbortSignal),
+    );
+    expect(dependencies.github.fetchRepositoryFile).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      "src/security/check.ts",
+      headSha,
+      expect.any(Number),
+      expect.any(AbortSignal),
+    );
+    expect(dependencies.generateReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.stringContaining("<untrusted-related_code_context>"),
+      }),
+      { model: "openai/test" },
+    );
+  });
+
+  it("does not exceed the shared context request cap", async () => {
+    const rawDiff = Array.from(
+      { length: 8 },
+      (_, index) =>
+        `diff --git a/src/file${index}.ts b/src/file${index}.ts\n@@ -1 +1 @@\n-old\n+import "./related";`,
+    ).join("\n");
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(rawDiff),
+      fetchRepositoryTree: vi.fn().mockResolvedValue({
+        status: "fetched",
+        paths: [
+          ...Array.from({ length: 8 }, (_, index) => `src/file${index}.ts`),
+          "src/related.ts",
+        ],
+      }),
+      fetchRepositoryFile: vi.fn().mockResolvedValue({
+        status: "fetched",
+        content: 'import "./related";',
+        byteLength: 20,
+      }),
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchRepositoryFile).toHaveBeenCalledTimes(8);
+    expect(dependencies.github.fetchRepositoryFile).not.toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      "src/related.ts",
+      expect.any(String),
+      expect.any(Number),
+      expect.any(AbortSignal),
+    );
   });
 
   it("reuses the latest completed review comment for a new head SHA", async () => {

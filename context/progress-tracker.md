@@ -6,8 +6,9 @@ Update this file after every meaningful implementation change.
 
 - Phase 1 core pipeline and dashboard foundation are complete.
 - Dashboard operations expansion (Features 18–21) is implemented.
-- Review-quality expansion is specified as Features 22–34; Feature 22 is in
-  progress.
+- Review-quality expansion is specified as Features 22–34; Feature 22
+  implementation is complete, Feature 23 is underway, and Feature 22 final
+  acceptance verification is pending.
 
 ## Current Goal
 
@@ -205,23 +206,29 @@ Update this file after every meaningful implementation change.
   final geometry; empty/error states are compact and directional. Lint, all
   89 Vitest tests, and production build pass. Manual visual check at 320px
   through wide desktop remains recommended before dogfooding.
+- Feature 22 (Smart Full-File Context) — implementation completed 2026-07-28:
+  bounded risk-ranked selection, exact-head GitHub Contents retrieval, strict
+  text/size validation, soft misses, timeout limits, prompt plumbing, shared
+  repository-path normalization, final prompt-budget trimming, and aggregate
+  runtime metadata are implemented. Full automated tests, lint, and production
+  build pass.
 
 ## In Progress
 
-- Feature 22 (Smart Full-File Context) — implementation underway:
-  bounded risk-ranked selection, exact-head GitHub Contents retrieval,
-  strict text/size validation, soft misses, timeout limits, prompt plumbing,
-  shared repository-path normalization, final prompt-budget trimming, and
-  aggregate runtime metadata are implemented. Focused and full automated tests
-  pass; PR #38 regression replay and end-to-end verification remain before
-  marking the feature complete.
+- Feature 22 acceptance verification: replay PR #38 to confirm both documented
+  false positives remain finding-free, then complete one deployed webhook to
+  worker review. Mark Feature 22 fully complete after both checks pass.
+- Feature 23 (Related Code Context) — implementation underway: deterministic
+  one-hop local-import and colocated-test planning, exact-head repository-tree
+  metadata, shared bounded retrieval, separate untrusted prompt context, and
+  aggregate related-context metadata are implemented; final adversarial,
+  end-to-end, and beta comparison checks remain.
 
 ## Next Up
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
 2. Implement the review-quality roadmap in dependency order:
-   - Features 22–23: smart full-file and related-code context;
    - Feature 24: independent finding evidence/false-positive adjudication;
    - Features 25–26: durable findings, inline comments, suggested changes;
    - Features 27–28: incremental review and finding reconciliation;

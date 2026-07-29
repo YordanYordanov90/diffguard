@@ -15,6 +15,7 @@ import {
 } from "@/lib/review/context";
 import type { DiffFile } from "@/lib/review/diff";
 import type { RepositoryFileResult } from "@/lib/github/client";
+import type { RelatedCodeCandidate } from "@/lib/review/related-context";
 
 type FetchRepositoryFile = (
   installationId: number,
@@ -33,6 +34,15 @@ type ContextBudget = {
 export type RetrievedFullFileContext = {
   files: FullFileContext[];
   metadata: FullFileContextMetadata;
+  requestCount: number;
+};
+
+export type RelatedCodeContext = FullFileContext & { reason: string };
+
+export type RetrievedRelatedCodeContext = {
+  files: RelatedCodeContext[];
+  metadata: FullFileContextMetadata;
+  requestCount: number;
 };
 
 function addMiss(metadata: FullFileContextMetadata, reason: FullFileContextMissReason) {
@@ -101,6 +111,8 @@ type CandidateResult =
   | { status: "accepted"; context: FullFileContext; bytes: number; tokens: number }
   | { status: "miss"; reason: FullFileContextMissReason };
 
+type ContextCandidate = { file: string };
+
 async function retrieveCandidate(params: {
   fetchRepositoryFile: FetchRepositoryFile;
   installationId: number;
@@ -145,30 +157,36 @@ async function retrieveCandidate(params: {
   };
 }
 
-export async function retrieveFullFileContext(params: {
+async function retrieveContextCandidates(params: {
   installationId: number;
   repoFullName: string;
   headSha: string;
-  files: DiffFile[];
+  candidates: ContextCandidate[];
   fetchRepositoryFile: FetchRepositoryFile;
   totalByteBudget?: number;
   totalTokenBudget?: number;
+  deadline?: number;
 }): Promise<RetrievedFullFileContext> {
-  const selection = selectFullFileContext(params.files);
-  const metadata = createFullFileContextMetadata(selection.candidates.length);
+  const metadata = createFullFileContextMetadata(params.candidates.length);
   const context: FullFileContext[] = [];
-  const deadline = Date.now() + FULL_FILE_CONTEXT_TIMEOUT_MS;
+  let requestCount = 0;
+  const deadline = params.deadline ?? Date.now() + FULL_FILE_CONTEXT_TIMEOUT_MS;
   const budget = {
     totalByteLimit: params.totalByteBudget ?? FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
     totalTokenLimit: params.totalTokenBudget ?? FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
   };
 
-  for (const candidate of selection.candidates) {
+  for (const candidate of params.candidates) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
       addMiss(metadata, "timeout");
       continue;
     }
+    if (budget.totalByteLimit <= 0 || budget.totalTokenLimit <= 0) {
+      addMiss(metadata, "over_budget");
+      continue;
+    }
+    requestCount += 1;
     const result = await retrieveCandidate({
       fetchRepositoryFile: params.fetchRepositoryFile,
       installationId: params.installationId,
@@ -189,5 +207,47 @@ export async function retrieveFullFileContext(params: {
     metadata.suppliedTokens += result.tokens;
   }
 
-  return { files: context, metadata };
+  return { files: context, metadata, requestCount };
+}
+
+export async function retrieveFullFileContext(params: {
+  installationId: number;
+  repoFullName: string;
+  headSha: string;
+  files: DiffFile[];
+  fetchRepositoryFile: FetchRepositoryFile;
+  totalByteBudget?: number;
+  totalTokenBudget?: number;
+  deadline?: number;
+}): Promise<RetrievedFullFileContext> {
+  const selection = selectFullFileContext(params.files);
+  return retrieveContextCandidates({
+    ...params,
+    candidates: selection.candidates,
+  });
+}
+
+export async function retrieveRelatedCodeContext(params: {
+  installationId: number;
+  repoFullName: string;
+  headSha: string;
+  candidates: RelatedCodeCandidate[];
+  fetchRepositoryFile: FetchRepositoryFile;
+  totalByteBudget?: number;
+  totalTokenBudget?: number;
+  deadline?: number;
+}): Promise<RetrievedRelatedCodeContext> {
+  const result = await retrieveContextCandidates({
+    ...params,
+    candidates: params.candidates.map(({ file }) => ({ file })),
+  });
+  const reasons = new Map(params.candidates.map((candidate) => [candidate.file, candidate.reasons]));
+  return {
+    files: result.files.map((file) => ({
+      ...file,
+      reason: reasons.get(file.file)?.join(", ") ?? "related code",
+    })),
+    metadata: result.metadata,
+    requestCount: result.requestCount,
+  };
 }
