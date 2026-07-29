@@ -11,6 +11,7 @@ import {
 } from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
 import type {
+  attachFindingGitHubCommentId,
   countReviewsToday,
   FindingUpsertInput,
   getInstallationModel,
@@ -24,12 +25,17 @@ import type {
   upsertConfirmedFindings,
 } from "@/lib/db/queries";
 import {
+  createPullRequestReview,
   fetchInstructionsFile,
   fetchPrDiff,
   fetchPrHeadSha,
   fetchRepositoryFile,
   fetchRepositoryTree,
+  listPullRequestReviewComments,
   upsertComment,
+  type CreatedPullRequestReviewComment,
+  type CreatePullRequestReviewResult,
+  type PullRequestReviewCommentInput,
   type RepositoryTreeResult,
 } from "@/lib/github/client";
 import { processDiff } from "@/lib/review/diff";
@@ -53,6 +59,11 @@ import {
   prepareCandidates,
 } from "@/lib/review/evidence";
 import { toPersistableFindings } from "@/lib/review/fingerprint";
+import {
+  planInlineComments,
+  stripInlineSuggestions,
+  type PreparedInlineComment,
+} from "@/lib/review/inline";
 import { renderReview } from "@/lib/review/render";
 import {
   candidateReviewOutputSchema,
@@ -65,6 +76,10 @@ import {
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
+type StoredFinding = Awaited<ReturnType<typeof upsertConfirmedFindings>>[number];
+type PublishedInlineReview = CreatePullRequestReviewResult & {
+  comments: CreatedPullRequestReviewComment[];
+};
 
 type ReviewQueries = {
   getReviewBySha: (...args: Parameters<typeof getReviewBySha>) => Promise<StoredReview>;
@@ -78,6 +93,9 @@ type ReviewQueries = {
   markReviewFailed: (...args: Parameters<typeof markReviewFailed>) => Promise<StoredReview>;
   upsertConfirmedFindings: (
     ...args: Parameters<typeof upsertConfirmedFindings>
+  ) => Promise<StoredFinding[]>;
+  attachFindingGitHubCommentId: (
+    ...args: Parameters<typeof attachFindingGitHubCommentId>
   ) => Promise<unknown>;
 };
 
@@ -88,6 +106,8 @@ type GitHubClient = {
   fetchRepositoryFile: typeof fetchRepositoryFile;
   fetchRepositoryTree: typeof fetchRepositoryTree;
   upsertComment: typeof upsertComment;
+  createPullRequestReview: typeof createPullRequestReview;
+  listPullRequestReviewComments: typeof listPullRequestReviewComments;
 };
 
 type QStashVerifier = {
@@ -156,6 +176,10 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         const { upsertConfirmedFindings } = await import("@/lib/db/queries");
         return upsertConfirmedFindings(...args);
       },
+      async attachFindingGitHubCommentId(...args) {
+        const { attachFindingGitHubCommentId } = await import("@/lib/db/queries");
+        return attachFindingGitHubCommentId(...args);
+      },
     },
     github: {
       fetchPrHeadSha,
@@ -164,10 +188,117 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       fetchRepositoryFile,
       fetchRepositoryTree,
       upsertComment,
+      createPullRequestReview,
+      listPullRequestReviewComments,
     },
     generateReview,
     adjudicateReview,
   };
+}
+
+function toReviewCommentInput(
+  comment: PreparedInlineComment,
+): PullRequestReviewCommentInput {
+  return {
+    path: comment.path,
+    body: comment.body,
+    line: comment.line,
+    side: comment.side,
+    ...(comment.startLine !== undefined
+      ? { startLine: comment.startLine, startSide: comment.startSide }
+      : {}),
+  };
+}
+
+async function listPublishedInlineReviewComments(
+  dependencies: ReviewWorkerDependencies,
+  job: ReviewJob,
+  reviewId: number,
+): Promise<CreatedPullRequestReviewComment[] | null> {
+  try {
+    return await dependencies.github.listPullRequestReviewComments(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      reviewId,
+    );
+  } catch {
+    try {
+      return await dependencies.github.listPullRequestReviewComments(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+        reviewId,
+      );
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function publishInlineReview(
+  dependencies: ReviewWorkerDependencies,
+  job: ReviewJob,
+  comments: PreparedInlineComment[],
+): Promise<PublishedInlineReview | null> {
+  if (comments.length === 0) return null;
+
+  let review: CreatePullRequestReviewResult;
+  try {
+    review = await dependencies.github.createPullRequestReview(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      job.headSha,
+      comments.map(toReviewCommentInput),
+    );
+  } catch {
+    // Retry once without suggestion blocks / multi-line anchors.
+    try {
+      review = await dependencies.github.createPullRequestReview(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+        job.headSha,
+        stripInlineSuggestions(comments).map(toReviewCommentInput),
+      );
+    } catch {
+      // Inline is secondary: summary review must still complete.
+      return null;
+    }
+  }
+
+  const published = await listPublishedInlineReviewComments(
+    dependencies,
+    job,
+    review.reviewId,
+  );
+  return published ? { reviewId: review.reviewId, comments: published } : null;
+}
+
+function matchPublishedCommentIds(
+  prepared: PreparedInlineComment[],
+  published: PublishedInlineReview,
+): Array<{ findingId: string; commentId: number }> {
+  const remaining = [...published.comments];
+  const matches: Array<{ findingId: string; commentId: number }> = [];
+
+  for (const comment of prepared) {
+    const index = remaining.findIndex(
+      (candidate) =>
+        candidate.path === comment.path &&
+        candidate.line === comment.line &&
+        candidate.body === comment.body &&
+        (comment.startLine === undefined ||
+          candidate.startLine === comment.startLine ||
+          candidate.startLine === null),
+    );
+    if (index < 0) continue;
+    matches.push({ findingId: comment.findingId, commentId: remaining[index].id });
+    remaining.splice(index, 1);
+  }
+
+  return matches;
 }
 
 function safeFailureText(error: unknown): string {
@@ -414,33 +545,11 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       }
     }
 
-    const markdown = renderReview(gatedReview, {
-      filesReviewed: processedDiff.files.length,
-      skippedFiles: processedDiff.skippedFiles,
-      headSha: job.headSha,
-    });
-    const previousCommentId = review.commentId ?? (await dependencies.queries.getLatestReviewCommentId(
-      job.installationId,
-      job.repositoryId,
-      job.prNumber,
-    ));
-    const commentId = await dependencies.github.upsertComment(
-      job.installationId,
-      job.repoFullName,
-      job.prNumber,
-      previousCommentId,
-      markdown,
-    );
-    await dependencies.queries.saveReviewCommentId(
-      job.installationId,
-      review.id,
-      commentId,
-    );
-
     const persistableFindings = toPersistableFindings(
       confirmedFindings,
       processedDiff.files,
     );
+    let storedFindings: StoredFinding[] = [];
     if (persistableFindings.length > 0) {
       const findingInputs: FindingUpsertInput[] = persistableFindings.map((finding) => ({
         installationId: job.installationId,
@@ -462,8 +571,87 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         reviewId: review.id,
         headSha: job.headSha,
       }));
-      await dependencies.queries.upsertConfirmedFindings(findingInputs);
+      storedFindings = await dependencies.queries.upsertConfirmedFindings(findingInputs);
     }
+
+    const inlinePlan = planInlineComments(
+      storedFindings.map((finding) => ({
+        id: finding.id,
+        fingerprint: finding.fingerprint,
+        githubCommentId: finding.githubCommentId,
+        confidence: finding.confidence,
+        severity: finding.severity,
+        category: finding.category,
+        file: finding.file,
+        line: finding.line,
+        title: finding.title,
+        detail: finding.detail,
+        suggestion: finding.suggestion,
+        suggestedChange: finding.suggestedChange,
+      })),
+      processedDiff.files,
+    );
+
+    const latestHeadSha = await dependencies.github.fetchPrHeadSha(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    const publishedInline = latestHeadSha.toLowerCase() === job.headSha.toLowerCase()
+      ? await publishInlineReview(dependencies, job, inlinePlan.comments)
+      : null;
+    const attachedFindingIds = new Set<string>();
+    if (publishedInline) {
+      const matches = matchPublishedCommentIds(inlinePlan.comments, publishedInline);
+      for (const match of matches) {
+        try {
+          await dependencies.queries.attachFindingGitHubCommentId(
+            job.installationId,
+            match.findingId,
+            match.commentId,
+          );
+          attachedFindingIds.add(match.findingId);
+        } catch {
+          // Secondary persistence failure must not block the summary comment.
+        }
+      }
+    }
+
+    const findingsWithInline = new Set(
+      storedFindings
+        .filter((finding) => finding.githubCommentId !== null)
+        .map((finding) => finding.id),
+    );
+    for (const id of attachedFindingIds) findingsWithInline.add(id);
+    const summaryOnlyFindingCount = storedFindings.filter(
+      (finding) => !findingsWithInline.has(finding.id),
+    ).length;
+    const attachedInlineCount = attachedFindingIds.size;
+
+    const markdown = renderReview(gatedReview, {
+      filesReviewed: processedDiff.files.length,
+      skippedFiles: processedDiff.skippedFiles,
+      headSha: job.headSha,
+      summaryOnlyFindingCount,
+      inlineCommentCount: attachedInlineCount,
+    });
+    const previousCommentId = review.commentId ?? (await dependencies.queries.getLatestReviewCommentId(
+      job.installationId,
+      job.repositoryId,
+      job.prNumber,
+    ));
+    const commentId = await dependencies.github.upsertComment(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      previousCommentId,
+      markdown,
+    );
+    await dependencies.queries.saveReviewCommentId(
+      job.installationId,
+      review.id,
+      commentId,
+    );
 
     await dependencies.queries.markReviewCompleted(job.installationId, review.id, {
       reviewMarkdown: markdown,
@@ -488,6 +676,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         relatedCode: relatedCodeContext.metadata,
         requestCount: fullFileContext.requestCount + relatedCodeContext.requestCount,
         repositoryTree: repositoryTree.status,
+        inlineComments: attachedInlineCount,
       },
     };
   } catch (error) {

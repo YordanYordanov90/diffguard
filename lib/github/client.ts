@@ -57,6 +57,40 @@ const repositoryTreeResponseSchema = z.object({
 
 const repositoryShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
 
+const pullRequestReviewSchema = z.object({
+  id: z.number().int().positive(),
+});
+
+const pullRequestReviewCommentSchema = z.object({
+  id: z.number().int().positive(),
+  path: z.string().min(1),
+  line: z.number().int().positive().nullable().optional(),
+  original_line: z.number().int().positive().nullable().optional(),
+  start_line: z.number().int().positive().nullable().optional(),
+  body: z.string(),
+});
+
+export type PullRequestReviewCommentInput = {
+  path: string;
+  body: string;
+  line: number;
+  side: "RIGHT" | "LEFT";
+  startLine?: number;
+  startSide?: "RIGHT" | "LEFT";
+};
+
+export type CreatedPullRequestReviewComment = {
+  id: number;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  body: string;
+};
+
+export type CreatePullRequestReviewResult = {
+  reviewId: number;
+};
+
 function createDefaultDependencies(): GitHubClientDependencies {
   let app: AppClient | undefined;
 
@@ -331,6 +365,82 @@ export function createGitHubClient(
       return z.object({ id: z.number().int().positive() }).parse(response.data).id;
     },
 
+    /** Submit one COMMENT review at the exact head SHA. */
+    async createPullRequestReview(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      headSha: string,
+      comments: PullRequestReviewCommentInput[],
+    ): Promise<CreatePullRequestReviewResult> {
+      repositoryShaSchema.parse(headSha);
+      if (comments.length === 0) {
+        throw new Error("createPullRequestReview requires at least one comment.");
+      }
+
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      const response = await octokit.request(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+        {
+          owner,
+          repo,
+          pull_number: prNumber,
+          commit_id: headSha,
+          event: "COMMENT",
+          comments: comments.map((comment) => ({
+            path: normalizeRepositoryPath(comment.path),
+            body: comment.body,
+            line: comment.line,
+            side: comment.side,
+            ...(comment.startLine !== undefined
+              ? {
+                  start_line: comment.startLine,
+                  start_side: comment.startSide ?? comment.side,
+                }
+              : {}),
+          })),
+        },
+      );
+
+      const review = pullRequestReviewSchema.parse(response.data);
+      return { reviewId: review.id };
+    },
+
+    /** List comments from a review that GitHub has already accepted. */
+    async listPullRequestReviewComments(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      reviewId: number,
+    ): Promise<CreatedPullRequestReviewComment[]> {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      const listed = await octokit.request(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/comments",
+        {
+          owner,
+          repo,
+          pull_number: prNumber,
+          review_id: reviewId,
+          per_page: 100,
+        },
+      );
+
+      const parsedComments = z
+        .array(pullRequestReviewCommentSchema)
+        .parse(listed.data)
+        .map((comment) => ({
+          id: comment.id,
+          path: normalizeRepositoryPath(comment.path),
+          line: comment.line ?? comment.original_line ?? null,
+          startLine: comment.start_line ?? null,
+          body: comment.body,
+        }));
+
+      return parsedComments;
+    },
+
     /**
      * Returns validated AccessibleInstallation descriptors for the signed-in
      * user. Invalid items (e.g. non-github.com html_url) are dropped, never
@@ -374,6 +484,12 @@ export const githubClient = {
   ) => getDefaultClient().fetchRepositoryTree(...args),
   upsertComment: (...args: Parameters<GitHubClient["upsertComment"]>) =>
     getDefaultClient().upsertComment(...args),
+  createPullRequestReview: (
+    ...args: Parameters<GitHubClient["createPullRequestReview"]>
+  ) => getDefaultClient().createPullRequestReview(...args),
+  listPullRequestReviewComments: (
+    ...args: Parameters<GitHubClient["listPullRequestReviewComments"]>
+  ) => getDefaultClient().listPullRequestReviewComments(...args),
   getUserInstallations: (
     ...args: Parameters<GitHubClient["getUserInstallations"]>
   ) => getDefaultClient().getUserInstallations(...args),
@@ -386,5 +502,7 @@ export const {
   fetchRepositoryFile,
   fetchRepositoryTree,
   upsertComment,
+  createPullRequestReview,
+  listPullRequestReviewComments,
   getUserInstallations,
 } = githubClient;

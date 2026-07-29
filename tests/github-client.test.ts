@@ -17,7 +17,7 @@ function createMockClient(
   treeResponse: unknown = { truncated: false, tree: [] },
 ) {
     const request = vi.fn(
-    (route: string, params?: { headers?: { accept?: string } }) => {
+    (route: string, params?: { headers?: { accept?: string }; event?: string }) => {
     if (route.includes("/git/trees/")) {
       return Promise.resolve({ data: treeResponse });
     }
@@ -25,6 +25,22 @@ function createMockClient(
       return Promise.resolve({
         data: instructionResponse,
       });
+    }
+    if (route.includes("/reviews/") && route.includes("/comments")) {
+      return Promise.resolve({
+        data: [
+          {
+            id: 7001,
+            path: "src/auth.ts",
+            line: 12,
+            start_line: null,
+            body: "inline finding",
+          },
+        ],
+      });
+    }
+    if (route.includes("/pulls/") && route.endsWith("/reviews") && route.startsWith("POST")) {
+      return Promise.resolve({ data: { id: 6001 } });
     }
     if (route.startsWith("POST")) return Promise.resolve({ data: { id: 501 } });
     if (route.startsWith("PATCH")) return Promise.resolve({ data: { id: 502 } });
@@ -236,6 +252,62 @@ describe("GitHub client", () => {
     expect(request).toHaveBeenCalledWith(
       "PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}",
       { owner: "owner", repo: "repo", comment_id: 501, body: "edited" },
+    );
+  });
+
+  it("submits one COMMENT review and retrieves its comment ids separately", async () => {
+    const { client, request } = createMockClient();
+
+    await expect(
+      client.createPullRequestReview(42, "owner/repo", 7, sha, [
+        {
+          path: "src/auth.ts",
+          body: "inline finding",
+          line: 12,
+          side: "RIGHT",
+        },
+      ]),
+    ).resolves.toEqual({ reviewId: 6001 });
+
+    await expect(
+      client.listPullRequestReviewComments(42, "owner/repo", 7, 6001),
+    ).resolves.toEqual([
+      {
+        id: 7001,
+        path: "src/auth.ts",
+        line: 12,
+        startLine: null,
+        body: "inline finding",
+      },
+    ]);
+
+    expect(request).toHaveBeenCalledWith(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner: "owner",
+        repo: "repo",
+        pull_number: 7,
+        commit_id: sha,
+        event: "COMMENT",
+        comments: [
+          {
+            path: "src/auth.ts",
+            body: "inline finding",
+            line: 12,
+            side: "RIGHT",
+          },
+        ],
+      },
+    );
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/comments",
+      {
+        owner: "owner",
+        repo: "repo",
+        pull_number: 7,
+        review_id: 6001,
+        per_page: 100,
+      },
     );
   });
 
