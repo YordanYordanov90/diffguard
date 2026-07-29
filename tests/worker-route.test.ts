@@ -25,6 +25,13 @@ function createDependencies(
   overrides: Partial<ReviewWorkerDependencies["queries"]> = {},
   githubOverrides: Partial<ReviewWorkerDependencies["github"]> = {},
 ): ReviewWorkerDependencies {
+  const upsert = overrides.upsertConfirmedFindings ?? vi.fn().mockResolvedValue([]);
+  const reconcile = overrides.reconcileFindings ?? vi.fn().mockImplementation(
+    async ({ findingInputs }: { findingInputs: Parameters<typeof upsert>[0] }) => ({
+      findings: await upsert(findingInputs),
+      resolved: [],
+    }),
+  );
   return {
     qstash: { verify: vi.fn().mockResolvedValue(true) },
     queries: {
@@ -42,8 +49,11 @@ function createDependencies(
       markReviewCompleted: vi.fn().mockResolvedValue({ id: "review-1" }),
       saveReviewCommentId: vi.fn().mockResolvedValue({ id: "review-1" }),
       markReviewFailed: vi.fn().mockResolvedValue({ id: "review-1" }),
-      upsertConfirmedFindings: vi.fn().mockResolvedValue([]),
+      upsertConfirmedFindings: upsert,
       attachFindingGitHubCommentId: vi.fn().mockResolvedValue(null),
+      listOpenFindingsByPr: vi.fn().mockResolvedValue([]),
+      reconcileFindings: reconcile,
+      markFindingResolutionReplied: vi.fn().mockResolvedValue(null),
       ...overrides,
     },
     github: {
@@ -66,6 +76,7 @@ function createDependencies(
       upsertComment: vi.fn().mockResolvedValue(9001),
       createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 1 }),
       listPullRequestReviewComments: vi.fn().mockResolvedValue([]),
+      replyToPullRequestReviewComment: vi.fn().mockResolvedValue(7002),
       ...githubOverrides,
     },
     generateReview: vi.fn().mockResolvedValue({
@@ -103,6 +114,22 @@ function storedInlineFinding() {
     detail: "Detail",
     suggestion: null,
     suggestedChange: null,
+  };
+}
+
+function storedOpenFinding(overrides: Record<string, unknown> = {}) {
+  return {
+    ...storedInlineFinding(),
+    id: "11111111-1111-4111-8111-111111111111",
+    fingerprint: "f".repeat(64),
+    status: "open" as const,
+    introducedReviewId: "review-0",
+    lastReviewId: "review-0",
+    introducedSha: previousHeadSha,
+    lastSeenSha: previousHeadSha,
+    resolvedSha: null,
+    resolutionRepliedAt: null,
+    ...overrides,
   };
 }
 
@@ -289,6 +316,95 @@ describe("review worker route", () => {
         comparedFromSha: previousHeadSha,
         reviewMarkdown: expect.stringContaining("incremental"),
       }),
+    );
+  });
+
+  it("keeps unaffected open findings in an incremental summary", async () => {
+    const openFinding = storedOpenFinding({ file: "src/existing.ts" });
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: 100,
+          updatedAt: new Date("2026-01-01"),
+        }),
+        listOpenFindingsByPr: vi.fn().mockResolvedValue([openFinding]),
+      },
+      {
+        fetchCommitRangeDiff: vi.fn().mockResolvedValue(
+          "diff --git a/src/new.ts b/src/new.ts\n@@ -0,0 +1 @@\n+export const only = true;",
+        ),
+      },
+    );
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.upsertComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      null,
+      expect.stringContaining("## Still open"),
+    );
+  });
+
+  it("resolves only an allowlisted finding and replies to its inline thread once", async () => {
+    const openFinding = storedOpenFinding({ githubCommentId: 7001 });
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: 100,
+          updatedAt: new Date("2026-01-01"),
+        }),
+        listOpenFindingsByPr: vi.fn().mockResolvedValue([openFinding]),
+        reconcileFindings: vi.fn().mockResolvedValue({
+          findings: [],
+          resolved: [openFinding],
+        }),
+      },
+      {
+        fetchCommitRangeDiff: vi.fn().mockResolvedValue(
+          "diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new",
+        ),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "The prior finding is fixed.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [{
+          findingId: openFinding.id,
+          status: "resolved",
+          reason: "The changed hunk restores the guard.",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.queries.reconcileFindings).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedFindingIds: [openFinding.id] }),
+    );
+    expect(dependencies.github.replyToPullRequestReviewComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      7001,
+      expect.stringContaining("resolved"),
+    );
+    expect(dependencies.queries.markFindingResolutionReplied).toHaveBeenCalledWith(
+      42,
+      100,
+      7,
+      openFinding.id,
     );
   });
 

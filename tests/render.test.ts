@@ -141,4 +141,24 @@ describe("review renderer", () => {
       "🛡️ DiffGuard · reviewed commit `abcdef1` · full review (fallback)",
     );
   });
+
+  it("groups reconciled findings by lifecycle outcome", () => {
+    const output = renderReview(
+      { ...fullReview, findings: [fullReview.findings[1]] },
+      {
+        ...metadata,
+        reconciliation: {
+          newFindings: [fullReview.findings[1]],
+          recurringFindings: [fullReview.findings[2]],
+          stillOpenFindings: [fullReview.findings[0]],
+          resolvedFindings: [fullReview.findings[3]],
+        },
+      },
+    );
+
+    expect(output).toContain("## New findings");
+    expect(output).toContain("## Recurring findings");
+    expect(output).toContain("## Still open");
+    expect(output).toContain("## Resolved in this update");
+  });
 });

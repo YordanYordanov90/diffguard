@@ -653,7 +653,11 @@ async function assertFindingRepository(
   }
 }
 
-function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
+function buildFindingUpsert(
+  input: FindingUpsertInput,
+  database: Database,
+  reopenResolved = false,
+) {
   return database
     .insert(reviewFindings)
     .values({
@@ -686,6 +690,13 @@ function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
         reviewFindings.fingerprint,
       ],
       set: {
+        ...(reopenResolved
+          ? {
+              status: "open" as const,
+              resolvedSha: null,
+              resolutionRepliedAt: null,
+            }
+          : {}),
         confidence: input.confidence,
         severity: input.severity,
         category: input.category,
@@ -704,7 +715,9 @@ function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
       },
       setWhere: and(
         eq(reviewFindings.installationId, input.installationId),
-        eq(reviewFindings.status, "open"),
+        reopenResolved
+          ? ne(reviewFindings.status, "dismissed")
+          : eq(reviewFindings.status, "open"),
       ),
     })
     .returning();
@@ -803,6 +816,31 @@ export async function attachFindingGitHubCommentId(
   return finding ?? null;
 }
 
+export async function markFindingResolutionReplied(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  findingId: string,
+  database: Database = defaultDb,
+) {
+  const now = new Date();
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({ resolutionRepliedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "resolved"),
+        isNull(reviewFindings.resolutionRepliedAt),
+      ),
+    )
+    .returning();
+  return finding ?? null;
+}
+
 /**
  * Mark a finding resolved or dismissed. Terminal statuses cannot silently reopen.
  */
@@ -864,4 +902,55 @@ export async function upsertConfirmedFindings(
 
   const results = await database.batch([firstQuery, ...remainingQueries]);
   return results.flat();
+}
+
+export type FindingReconciliationInput = {
+  installationId: number;
+  repositoryId: number;
+  prNumber: number;
+  headSha: string;
+  findingInputs: FindingUpsertInput[];
+  resolvedFindingIds: string[];
+};
+
+/**
+ * Atomically reopen evidence-confirmed findings and resolve only trusted,
+ * tenant/PR-scoped open finding ids. Dismissed findings always remain terminal.
+ */
+export async function reconcileFindings(
+  input: FindingReconciliationInput,
+  database: Database = defaultDb,
+) {
+  const sample = input.findingInputs[0];
+  if (sample) await assertFindingRepository(sample, database);
+
+  const findingQueries = input.findingInputs.map((finding) =>
+    buildFindingUpsert(finding, database, true),
+  );
+  const resolvedQuery = input.resolvedFindingIds.length > 0
+    ? database
+      .update(reviewFindings)
+      .set({
+        status: "resolved",
+        resolvedSha: input.headSha,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(reviewFindings.installationId, input.installationId),
+          eq(reviewFindings.repositoryId, input.repositoryId),
+          eq(reviewFindings.prNumber, input.prNumber),
+          eq(reviewFindings.status, "open"),
+          inArray(reviewFindings.id, input.resolvedFindingIds),
+        ),
+      )
+      .returning()
+    : null;
+  const queries = resolvedQuery ? [...findingQueries, resolvedQuery] : findingQueries;
+  if (queries.length === 0) return { findings: [], resolved: [] };
+
+  const results = await database.batch(queries);
+  const findingResults = results.slice(0, findingQueries.length).flat();
+  const resolved = resolvedQuery ? results.at(-1) ?? [] : [];
+  return { findings: findingResults, resolved };
 }
