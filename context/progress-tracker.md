@@ -232,6 +232,11 @@ Update this file after every meaningful implementation change.
   finding rows remain readable. Migration `0002_review_findings.sql` generated
   and applied to Neon. Automated fingerprint, evidence, worker, lint, test,
   and production-build checks pass.
+- PR #56 Codex feedback fixes — implementation completed 2026-07-29:
+  summary comment IDs are saved before durable-finding writes, ensuring retries
+  edit the existing summary after a persistence failure; confirmed finding
+  batches now use Neon HTTP's atomic transaction batch so partial rows cannot
+  survive a failed review.
 
 ## In Progress
 

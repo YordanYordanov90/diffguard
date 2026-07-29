@@ -36,6 +36,7 @@ function createDependencies(
       markReviewSkipped: vi.fn().mockResolvedValue(null),
       markReviewRunning: vi.fn().mockResolvedValue({ id: "review-1" }),
       markReviewCompleted: vi.fn().mockResolvedValue({ id: "review-1" }),
+      saveReviewCommentId: vi.fn().mockResolvedValue({ id: "review-1" }),
       markReviewFailed: vi.fn().mockResolvedValue({ id: "review-1" }),
       upsertConfirmedFindings: vi.fn().mockResolvedValue([]),
       ...overrides,
@@ -145,8 +146,80 @@ describe("review worker route", () => {
     );
     expect(dependencies.adjudicateReview).not.toHaveBeenCalled();
     expect(dependencies.github.upsertComment).toHaveBeenCalledBefore(
+      dependencies.queries.saveReviewCommentId,
+    );
+    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      9001,
+    );
+    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledBefore(
       dependencies.queries.markReviewCompleted,
     );
+  });
+
+  it("persists the summary comment before a finding write failure", async () => {
+    const dependencies = createDependencies({
+      upsertConfirmedFindings: vi.fn().mockRejectedValue(new Error("Database unavailable.")),
+    }, {
+      fetchPrDiff: vi.fn().mockResolvedValue(
+        `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+      ),
+    });
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [{
+          severity: "high",
+          category: "bug",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Confirmed changed behavior",
+          detail: "The changed behavior breaks the invariant.",
+          suggestion: null,
+          confidence: "high",
+          observedBehavior: "The new branch returns an unsafe value.",
+          causalPath: "The changed return is consumed by the caller.",
+          violatedInvariant: "The caller must receive a safe value.",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 2, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Confirmed",
+        verdict: "concerns",
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "confirmed",
+          reason: "The hunk proves the failure path.",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(500);
+    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      9001,
+    );
+    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledBefore(
+      dependencies.queries.upsertConfirmedFindings,
+    );
+    expect(dependencies.queries.markReviewFailed).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      "Review processing failed.",
+    );
+    expect(dependencies.queries.markReviewCompleted).not.toHaveBeenCalled();
   });
 
   it("gates candidates before rendering and persists aggregate adjudication telemetry", async () => {

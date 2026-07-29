@@ -17,6 +17,7 @@ import type {
   getLatestReviewCommentId,
   getReviewBySha,
   markReviewCompleted,
+  saveReviewCommentId,
   markReviewFailed,
   markReviewRunning,
   markReviewSkipped,
@@ -73,6 +74,7 @@ type ReviewQueries = {
   markReviewSkipped: (...args: Parameters<typeof markReviewSkipped>) => Promise<unknown>;
   markReviewRunning: (...args: Parameters<typeof markReviewRunning>) => Promise<StoredReview>;
   markReviewCompleted: (...args: Parameters<typeof markReviewCompleted>) => Promise<StoredReview>;
+  saveReviewCommentId: (...args: Parameters<typeof saveReviewCommentId>) => Promise<StoredReview>;
   markReviewFailed: (...args: Parameters<typeof markReviewFailed>) => Promise<StoredReview>;
   upsertConfirmedFindings: (
     ...args: Parameters<typeof upsertConfirmedFindings>
@@ -141,6 +143,10 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       async markReviewCompleted(...args) {
         const { markReviewCompleted } = await import("@/lib/db/queries");
         return markReviewCompleted(...args);
+      },
+      async saveReviewCommentId(...args) {
+        const { saveReviewCommentId } = await import("@/lib/db/queries");
+        return saveReviewCommentId(...args);
       },
       async markReviewFailed(...args) {
         const { markReviewFailed } = await import("@/lib/db/queries");
@@ -424,6 +430,11 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       job.prNumber,
       previousCommentId,
       markdown,
+    );
+    await dependencies.queries.saveReviewCommentId(
+      job.installationId,
+      review.id,
+      commentId,
     );
 
     const persistableFindings = toPersistableFindings(

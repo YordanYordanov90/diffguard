@@ -307,6 +307,25 @@ export async function markReviewCompleted(
   return review ?? null;
 }
 
+/**
+ * Save the GitHub summary comment as soon as it is created so retries can
+ * update it even when a later persistence step fails.
+ */
+export async function saveReviewCommentId(
+  installationId: number,
+  reviewId: string,
+  commentId: number,
+  database: Database = defaultDb,
+) {
+  const [review] = await database
+    .update(reviews)
+    .set({ commentId, updatedAt: new Date() })
+    .where(and(eq(reviews.id, reviewId), eq(reviews.installationId, installationId)))
+    .returning();
+
+  return review ?? null;
+}
+
 export async function markReviewFailed(
   installationId: number,
   reviewId: string,
@@ -579,14 +598,9 @@ export type FindingUpsertInput = {
   headSha: string;
 };
 
-/**
- * Upsert a confirmed finding by (repository, PR, fingerprint).
- * Never overwrites an existing github_comment_id.
- * Never silently reopens dismissed findings; resolved reopening is Feature 28.
- */
-export async function upsertFindingByFingerprint(
+async function assertFindingRepository(
   input: FindingUpsertInput,
-  database: Database = defaultDb,
+  database: Database,
 ) {
   const [repository] = await database
     .select({ id: repositories.id })
@@ -602,8 +616,10 @@ export async function upsertFindingByFingerprint(
   if (!repository) {
     throw new Error("Repository is not registered for this installation.");
   }
+}
 
-  const [finding] = await database
+function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
+  return database
     .insert(reviewFindings)
     .values({
       installationId: input.installationId,
@@ -657,6 +673,20 @@ export async function upsertFindingByFingerprint(
       ),
     })
     .returning();
+}
+
+/**
+ * Upsert a confirmed finding by (repository, PR, fingerprint).
+ * Never overwrites an existing github_comment_id.
+ * Never silently reopens dismissed findings; resolved reopening is Feature 28.
+ */
+export async function upsertFindingByFingerprint(
+  input: FindingUpsertInput,
+  database: Database = defaultDb,
+) {
+  await assertFindingRepository(input, database);
+
+  const [finding] = await buildFindingUpsert(input, database);
 
   if (finding) return finding;
 
@@ -781,10 +811,22 @@ export async function upsertConfirmedFindings(
   inputs: FindingUpsertInput[],
   database: Database = defaultDb,
 ) {
-  const results = [];
+  if (inputs.length === 0) return [];
+
+  const repositoriesToValidate = new Map<string, FindingUpsertInput>();
   for (const input of inputs) {
-    const finding = await upsertFindingByFingerprint(input, database);
-    if (finding) results.push(finding);
+    repositoriesToValidate.set(`${input.installationId}:${input.repositoryId}`, input);
   }
-  return results;
+  await Promise.all(
+    [...repositoriesToValidate.values()].map((input) =>
+      assertFindingRepository(input, database),
+    ),
+  );
+
+  const queries = inputs.map((input) => buildFindingUpsert(input, database));
+  const [firstQuery, ...remainingQueries] = queries;
+  if (!firstQuery) return [];
+
+  const results = await database.batch([firstQuery, ...remainingQueries]);
+  return results.flat();
 }
