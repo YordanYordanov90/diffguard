@@ -89,6 +89,12 @@
   adjudication has a bounded output-token budget. Timeout or malformed
   adjudication fails closed by suppressing unverified candidates. Review rows
   store only aggregate candidate/decision counts and adjudication model/time.
+- Feature 25 persists one durable finding row per repository, PR, and trusted
+  fingerprint for confirmed candidates only. Fingerprints are computed in pure
+  code from normalized semantics plus a one-way evidence anchor; retries upsert
+  without duplicating rows or overwriting existing GitHub comment ids.
+  Dismissed findings never silently reopen. Diffs, prompts, and source content
+  remain non-persisted.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

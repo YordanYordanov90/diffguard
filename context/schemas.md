@@ -16,6 +16,7 @@ Category     = "security" | "bug" | "quality" | "performance"
 Verdict      = "approve" | "comment" | "concerns"
 FindingConfidence = "low" | "medium" | "high"
 FindingDecision   = "confirmed" | "rejected" | "manual_verification"
+FindingLifecycle  = "open" | "resolved" | "dismissed"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -80,6 +81,50 @@ INDEX  (installation_id, created_at)          // dashboard + daily cap
 
 Usage/caps are derived: `count(reviews) where installation_id = X and
 created_at >= start_of_day and status != 'skipped'`.
+
+### review_findings (Feature 25)
+
+```ts
+id                    uuid PK DEFAULT gen_random_uuid()
+installation_id       bigint NOT NULL FK -> installations.id (cascade)
+repository_id         bigint NOT NULL FK -> repositories.id (cascade)
+pr_number             integer NOT NULL
+fingerprint           text NOT NULL       // trusted SHA-256, no source text
+status                FindingLifecycle NOT NULL DEFAULT "open"
+confidence            FindingConfidence NOT NULL
+severity              Severity NOT NULL
+category              Category NOT NULL
+file                  text NOT NULL
+line                  integer NULL
+title                 text NOT NULL
+detail                text NOT NULL
+observed_behavior     text NOT NULL
+causal_path           text NOT NULL
+violated_invariant    text NOT NULL
+suggestion            text NULL
+suggested_change      jsonb NULL           // validated SuggestedChange
+introduced_review_id  uuid NOT NULL FK -> reviews.id
+last_review_id        uuid NOT NULL FK -> reviews.id
+introduced_sha        text NOT NULL
+last_seen_sha         text NOT NULL
+resolved_sha          text NULL
+github_comment_id     bigint NULL
+resolution_replied_at timestamptz NULL
+dismissed_at          timestamptz NULL
+created_at            timestamptz NOT NULL DEFAULT now()
+updated_at            timestamptz NOT NULL DEFAULT now()
+
+UNIQUE (repository_id, pr_number, fingerprint)
+INDEX  (installation_id, repository_id, pr_number, status)
+```
+
+Every query filters by `installation_id`. Only Feature 24 `confirmed`
+candidates become rows. Fingerprints are computed in trusted pure code from
+normalized category/file/line/violated-invariant plus a one-way hash of
+normalized observed-behavior and causal-path. Invalid line locations degrade
+to file-level findings before persistence. `suggested_change` is revalidated
+at the write boundary. Upserts never overwrite an existing
+`github_comment_id` and never silently reopen `dismissed` findings.
 
 ## GitHub App OAuth Contracts (Zod — `lib/auth/github-app.ts`)
 
@@ -183,6 +228,10 @@ AdjudicationOutput = {
   verdict:   Verdict
   decisions: FindingAdjudication[]
 }
+
+ConfirmedFinding = FindingCandidate & {
+  requiresRuntimeVerification: false
+}
 ```
 
 Rules: `generateObject` with these schemas; on Zod failure each structured
@@ -190,10 +239,11 @@ call retries once with the validation error appended. The first call produces
 candidates; trusted code validates their file and changed line against the
 parsed diff and assigns candidate ids. The independent second call receives
 only allowlisted candidates and delimited evidence. Only `confirmed`
-candidates become the publishable `ReviewOutput`; rejected and
-manual-verification candidates never affect counts or output. Malformed,
-missing, duplicate, or arbitrary adjudication ids confirm nothing for the
-affected candidate.
+candidates become the publishable `ReviewOutput` and durable
+`review_findings` rows; rejected and manual-verification candidates never
+affect counts, output, or finding persistence. Malformed, missing, duplicate,
+or arbitrary adjudication ids confirm nothing for the affected candidate.
+Fingerprints are never accepted from the LLM.
 
 ## Webhook Boundary (Zod — validated after HMAC verification)
 
@@ -299,21 +349,23 @@ never persisted.
 
 ## Planned Review-Quality Contracts
 
-The remaining contracts below belong to Features 25–34 and are **not implemented yet**.
-They are the shape source of truth when each numbered feature begins. Move
-each contract into the implemented sections above, and update the matching
+The remaining contracts below belong to Features 26–34 and are **not implemented yet**
+(Feature 25 `review_findings` / fingerprints / `ConfirmedFinding` are implemented
+above). They are the shape source of truth when each numbered feature begins.
+Move each contract into the implemented sections above, and update the matching
 Zod/Drizzle code in the same increment.
 
 ### Planned enums
 
 ```ts
 ReviewMode       = "full" | "incremental" | "fallback_full"
-FindingLifecycle  = "open" | "resolved" | "dismissed"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
+
+`FindingLifecycle` is implemented above under Enums.
 
 ### Planned reviews additions (Features 27 and 29)
 
@@ -326,46 +378,6 @@ linked_issue_assessments jsonb NOT NULL DEFAULT "[]"
 `compared_from_sha`, like `head_sha`, is a 40-character hexadecimal SHA.
 The JSON column is validated as `IssueAssessment[]` before every write and
 after every read.
-
-### review_findings (Feature 25)
-
-```ts
-id                    uuid PK DEFAULT gen_random_uuid()
-installation_id       bigint NOT NULL FK
-repository_id         bigint NOT NULL FK -> repositories.id
-pr_number             integer NOT NULL
-fingerprint           text NOT NULL       // trusted SHA-256, no source text
-status                FindingLifecycle NOT NULL DEFAULT "open"
-confidence            FindingConfidence NOT NULL
-severity              Severity NOT NULL
-category              Category NOT NULL
-file                  text NOT NULL
-line                  integer NULL
-title                 text NOT NULL
-detail                text NOT NULL
-observed_behavior     text NOT NULL
-causal_path           text NOT NULL
-violated_invariant    text NOT NULL
-suggestion            text NULL
-suggested_change      jsonb NULL           // validated SuggestedChange
-introduced_review_id  uuid NOT NULL FK -> reviews.id
-last_review_id        uuid NOT NULL FK -> reviews.id
-introduced_sha        text NOT NULL
-last_seen_sha         text NOT NULL
-resolved_sha          text NULL
-github_comment_id     bigint NULL
-resolution_replied_at timestamptz NULL
-dismissed_at          timestamptz NULL
-created_at            timestamptz NOT NULL DEFAULT now()
-updated_at            timestamptz NOT NULL DEFAULT now()
-
-UNIQUE (repository_id, pr_number, fingerprint)
-INDEX  (installation_id, repository_id, pr_number, status)
-```
-
-Every query filters by `installation_id`. `suggested_change` is validated at
-the database boundary and revalidated against the current diff before GitHub
-publication.
 
 ### finding_feedback (Feature 30)
 

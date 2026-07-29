@@ -12,13 +12,16 @@ import {
 import { parseEnv } from "@/lib/config/env";
 import type {
   countReviewsToday,
+  FindingUpsertInput,
   getInstallationModel,
   getLatestReviewCommentId,
   getReviewBySha,
   markReviewCompleted,
+  saveReviewCommentId,
   markReviewFailed,
   markReviewRunning,
   markReviewSkipped,
+  upsertConfirmedFindings,
 } from "@/lib/db/queries";
 import {
   fetchInstructionsFile,
@@ -49,11 +52,13 @@ import {
   getRelevantDiffHunks,
   prepareCandidates,
 } from "@/lib/review/evidence";
+import { toPersistableFindings } from "@/lib/review/fingerprint";
 import { renderReview } from "@/lib/review/render";
 import {
   candidateReviewOutputSchema,
   reviewOutputSchema,
   adjudicationOutputSchema,
+  type ConfirmedFinding,
   type FindingCandidate,
   type ReviewOutput,
 } from "@/lib/review/schema";
@@ -69,7 +74,11 @@ type ReviewQueries = {
   markReviewSkipped: (...args: Parameters<typeof markReviewSkipped>) => Promise<unknown>;
   markReviewRunning: (...args: Parameters<typeof markReviewRunning>) => Promise<StoredReview>;
   markReviewCompleted: (...args: Parameters<typeof markReviewCompleted>) => Promise<StoredReview>;
+  saveReviewCommentId: (...args: Parameters<typeof saveReviewCommentId>) => Promise<StoredReview>;
   markReviewFailed: (...args: Parameters<typeof markReviewFailed>) => Promise<StoredReview>;
+  upsertConfirmedFindings: (
+    ...args: Parameters<typeof upsertConfirmedFindings>
+  ) => Promise<unknown>;
 };
 
 type GitHubClient = {
@@ -135,9 +144,17 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         const { markReviewCompleted } = await import("@/lib/db/queries");
         return markReviewCompleted(...args);
       },
+      async saveReviewCommentId(...args) {
+        const { saveReviewCommentId } = await import("@/lib/db/queries");
+        return saveReviewCommentId(...args);
+      },
       async markReviewFailed(...args) {
         const { markReviewFailed } = await import("@/lib/db/queries");
         return markReviewFailed(...args);
+      },
+      async upsertConfirmedFindings(...args) {
+        const { upsertConfirmedFindings } = await import("@/lib/db/queries");
+        return upsertConfirmedFindings(...args);
       },
     },
     github: {
@@ -348,6 +365,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     const generatedCandidates = candidateFindings(generated.output);
     const prepared = prepareCandidates(generatedCandidates, processedDiff.files);
     let gatedReview = emptyGatedReview();
+    let confirmedFindings: ConfirmedFinding[] = [];
     let rejectedFindings = prepared.rejectedCount;
     let manualCheckCandidates = 0;
     let adjudicationModel: string | null = null;
@@ -379,6 +397,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
             prepared.rejectedCount,
           );
           gatedReview = decision.review;
+          confirmedFindings = decision.confirmedFindings;
           rejectedFindings = decision.rejectedCount;
           manualCheckCandidates = decision.manualCount;
         } else {
@@ -412,6 +431,39 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       previousCommentId,
       markdown,
     );
+    await dependencies.queries.saveReviewCommentId(
+      job.installationId,
+      review.id,
+      commentId,
+    );
+
+    const persistableFindings = toPersistableFindings(
+      confirmedFindings,
+      processedDiff.files,
+    );
+    if (persistableFindings.length > 0) {
+      const findingInputs: FindingUpsertInput[] = persistableFindings.map((finding) => ({
+        installationId: job.installationId,
+        repositoryId: job.repositoryId,
+        prNumber: job.prNumber,
+        fingerprint: finding.fingerprint,
+        confidence: finding.confidence,
+        severity: finding.severity,
+        category: finding.category,
+        file: finding.file,
+        line: finding.line,
+        title: finding.title,
+        detail: finding.detail,
+        observedBehavior: finding.observedBehavior,
+        causalPath: finding.causalPath,
+        violatedInvariant: finding.violatedInvariant,
+        suggestion: finding.suggestion,
+        suggestedChange: finding.suggestedChange,
+        reviewId: review.id,
+        headSha: job.headSha,
+      }));
+      await dependencies.queries.upsertConfirmedFindings(findingInputs);
+    }
 
     await dependencies.queries.markReviewCompleted(job.installationId, review.id, {
       reviewMarkdown: markdown,

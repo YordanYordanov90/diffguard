@@ -6,9 +6,9 @@ Update this file after every meaningful implementation change.
 
 - Phase 1 core pipeline and dashboard foundation are complete.
 - Dashboard operations expansion (Features 18–21) is implemented.
-- Review-quality expansion is specified as Features 22–34; Feature 22
-  implementation is complete, Feature 23 is underway, Feature 24 is
-  implemented, and Feature 22 final acceptance verification is pending.
+- Review-quality expansion is specified as Features 22–34; Features 22 and 24
+  are implemented with acceptance verification still pending, Feature 23 is
+  underway, and Feature 25 (finding records & fingerprints) is implemented.
 
 ## Current Goal
 
@@ -223,6 +223,20 @@ Update this file after every meaningful implementation change.
   Automated evidence, adversarial, cost, timeout, lint, test, and
   production-build checks pass; deployed PR #38 replay remains acceptance
   verification.
+- Feature 25 (Finding Records & Stable Fingerprints) — implementation
+  completed 2026-07-29: `review_findings` table and lifecycle/confidence/
+  severity/category enums, trusted pure-code SHA-256 fingerprints, confirmed-
+  only upsert wiring in the worker, tenant-scoped query helpers (upsert,
+  list-by-review, list-open-by-PR, attach comment id, terminal status), and
+  invalid-line degradation to file-level findings. Historical reviews without
+  finding rows remain readable. Migration `0002_review_findings.sql` generated
+  and applied to Neon. Automated fingerprint, evidence, worker, lint, test,
+  and production-build checks pass.
+- PR #56 Codex feedback fixes — implementation completed 2026-07-29:
+  summary comment IDs are saved before durable-finding writes, ensuring retries
+  edit the existing summary after a persistence failure; confirmed finding
+  batches now use Neon HTTP's atomic transaction batch so partial rows cannot
+  survive a failed review.
 
 ## In Progress
 
@@ -237,12 +251,13 @@ Update this file after every meaningful implementation change.
 - Feature 24 deployed acceptance verification: replay PR #38 at `3dfdbfb`
   and confirm both documented false positives remain finding-free.
 
+
 ## Next Up
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
-2. Implement the review-quality roadmap in dependency order:
-   - Features 25–26: durable findings, inline comments, suggested changes;
+2. Continue the review-quality roadmap in dependency order:
+   - Feature 26: inline comments and suggested changes;
    - Features 27–28: incremental review and finding reconciliation;
    - Feature 29: linked GitHub Issue validation;
    - Features 30–32: feedback signals and governed repository learnings;
