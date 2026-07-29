@@ -53,6 +53,11 @@ function createDependencies(
       usage: { inputTokens: 10, outputTokens: 3 },
       durationMs: 12,
     }),
+    adjudicateReview: vi.fn().mockResolvedValue({
+      output: { summary: "No confirmed findings.", verdict: "approve", decisions: [] },
+      usage: { inputTokens: 6, outputTokens: 2 },
+      durationMs: 4,
+    }),
   };
 }
 
@@ -135,9 +140,141 @@ describe("review worker route", () => {
     expect(dependencies.generateReview).toHaveBeenCalledWith(
       expect.objectContaining({ user: expect.stringContaining("Add feature") }),
       { model: "openai/test" },
+      expect.objectContaining({ deadline: expect.any(Number) }),
     );
+    expect(dependencies.adjudicateReview).not.toHaveBeenCalled();
     expect(dependencies.github.upsertComment).toHaveBeenCalledBefore(
       dependencies.queries.markReviewCompleted,
+    );
+  });
+
+  it("gates candidates before rendering and persists aggregate adjudication telemetry", async () => {
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(
+        `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+      ),
+    });
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Candidate draft must not be published.",
+        verdict: "concerns",
+        candidates: [{
+          severity: "high",
+          category: "bug",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Confirmed changed behavior",
+          detail: "The changed behavior breaks the invariant.",
+          suggestion: null,
+          confidence: "high",
+          observedBehavior: "The new branch returns an unsafe value.",
+          causalPath: "The changed return is consumed by the caller.",
+          violatedInvariant: "The caller must receive a safe value.",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 10, outputTokens: 3 },
+      durationMs: 12,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "The changed behavior has a concrete failure path.",
+        verdict: "concerns",
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "confirmed",
+          reason: "The hunk demonstrates the failure path.",
+        }],
+      },
+      usage: { inputTokens: 8, outputTokens: 4 },
+      durationMs: 5,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.adjudicateReview).toHaveBeenCalledOnce();
+    expect(dependencies.github.upsertComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      null,
+      expect.stringContaining("Confirmed changed behavior"),
+    );
+    expect(dependencies.github.upsertComment).not.toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      null,
+      expect.stringContaining("Candidate draft must not be published"),
+    );
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        candidateFindings: 1,
+        rejectedFindings: 0,
+        manualCheckCandidates: 0,
+        adjudicationModel: "openai/test",
+        inputTokens: 18,
+        outputTokens: 7,
+      }),
+    );
+  });
+
+  it("fails closed when adjudication times out", async () => {
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(
+        `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+      ),
+    });
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [{
+          severity: "critical",
+          category: "security",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Unverified candidate",
+          detail: "Candidate detail.",
+          suggestion: null,
+          confidence: "high",
+          observedBehavior: "Observed behavior.",
+          causalPath: "Causal path.",
+          violatedInvariant: "Invariant.",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.adjudicateReview = vi.fn().mockRejectedValue(
+      new ReviewFailedError("The review generation timed out.", undefined, true, true),
+    );
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.upsertComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      null,
+      expect.not.stringContaining("Unverified candidate"),
+    );
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        findingsCritical: 0,
+        candidateFindings: 1,
+        rejectedFindings: 1,
+        manualCheckCandidates: 0,
+      }),
     );
   });
 
@@ -201,6 +338,7 @@ describe("review worker route", () => {
         user: expect.stringContaining("<untrusted-related_code_context>"),
       }),
       { model: "openai/test" },
+      expect.objectContaining({ deadline: expect.any(Number) }),
     );
   });
 

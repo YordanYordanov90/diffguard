@@ -49,6 +49,11 @@ export type ReviewCompletion = {
   findingsMedium: number;
   findingsLow: number;
   findingsInfo: number;
+  candidateFindings: number;
+  rejectedFindings: number;
+  manualCheckCandidates: number;
+  adjudicationModel: string | null;
+  adjudicationDurationMs: number | null;
   skippedFiles: string[];
   model: string;
   inputTokens: number | null;

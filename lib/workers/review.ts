@@ -5,6 +5,7 @@ import {
   FULL_FILE_CONTEXT_TIMEOUT_MS,
   FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
   FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
+  LLM_TIMEOUT_MS,
   REVIEW_CONTEXT_MAX_FETCHES,
   REVIEW_PROMPT_TOKEN_BUDGET,
 } from "@/lib/config/constants";
@@ -29,16 +30,33 @@ import {
   type RepositoryTreeResult,
 } from "@/lib/github/client";
 import { processDiff } from "@/lib/review/diff";
-import { generateReview, ReviewFailedError } from "@/lib/review/generate";
+import {
+  adjudicateReview,
+  generateReview,
+  ReviewFailedError,
+} from "@/lib/review/generate";
 import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
 import { planRelatedCodeContext } from "@/lib/review/related-context";
 import {
   buildReviewPrompt,
+  buildAdjudicationPrompt,
   estimateReviewPromptTokens,
   fitContextToPromptBudget,
 } from "@/lib/review/prompt";
+import {
+  applyAdjudication,
+  emptyGatedReview,
+  getRelevantDiffHunks,
+  prepareCandidates,
+} from "@/lib/review/evidence";
 import { renderReview } from "@/lib/review/render";
-import type { ReviewOutput } from "@/lib/review/schema";
+import {
+  candidateReviewOutputSchema,
+  reviewOutputSchema,
+  adjudicationOutputSchema,
+  type FindingCandidate,
+  type ReviewOutput,
+} from "@/lib/review/schema";
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
@@ -72,6 +90,7 @@ export type ReviewWorkerDependencies = {
   queries: ReviewQueries;
   github: GitHubClient;
   generateReview: typeof generateReview;
+  adjudicateReview?: typeof adjudicateReview;
 };
 
 function envelope(success: boolean, data: unknown, error: string | null, status: number) {
@@ -130,6 +149,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       upsertComment,
     },
     generateReview,
+    adjudicateReview,
   };
 }
 
@@ -152,6 +172,32 @@ function severityCounts(review: ReviewOutput) {
       findingsInfo: 0,
     },
   );
+}
+
+function candidateFindings(output: unknown): FindingCandidate[] {
+  const candidateOutput = candidateReviewOutputSchema.safeParse(output);
+  if (candidateOutput.success) return candidateOutput.data.candidates;
+  const legacyOutput = reviewOutputSchema.safeParse(output);
+  if (!legacyOutput.success) return [];
+  return legacyOutput.data.findings.map((finding) => ({
+    ...finding,
+    confidence: "high" as const,
+    observedBehavior: "",
+    causalPath: "",
+    violatedInvariant: "",
+    requiresRuntimeVerification: false,
+    suggestedChange: null,
+  }));
+}
+
+function addUsage(
+  left: { inputTokens: number | null; outputTokens: number | null },
+  right: { inputTokens: number | null; outputTokens: number | null },
+) {
+  return {
+    inputTokens: (left.inputTokens ?? 0) + (right.inputTokens ?? 0),
+    outputTokens: (left.outputTokens ?? 0) + (right.outputTokens ?? 0),
+  };
 }
 
 function isTerminalReview(review: NonNullable<StoredReview>) {
@@ -223,6 +269,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
   );
   if (!runningReview) return { status: "already_processing" as const };
 
+  const reviewStartedAt = Date.now();
+  const llmDeadline = reviewStartedAt + LLM_TIMEOUT_MS;
   try {
     const [model, rawDiff, instructions] = await Promise.all([
       dependencies.queries.getInstallationModel(job.installationId),
@@ -296,8 +344,58 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       REVIEW_PROMPT_TOKEN_BUDGET,
     );
     const prompt = buildReviewPrompt({ ...promptContext, ...fittedContext });
-    const generated = await dependencies.generateReview(prompt, { model });
-    const markdown = renderReview(generated.output, {
+    const generated = await dependencies.generateReview(prompt, { model }, { deadline: llmDeadline });
+    const generatedCandidates = candidateFindings(generated.output);
+    const prepared = prepareCandidates(generatedCandidates, processedDiff.files);
+    let gatedReview = emptyGatedReview();
+    let rejectedFindings = prepared.rejectedCount;
+    let manualCheckCandidates = 0;
+    let adjudicationModel: string | null = null;
+    let adjudicationDurationMs: number | null = null;
+    let totalUsage = generated.usage;
+
+    if (prepared.candidates.length > 0) {
+      if (!dependencies.adjudicateReview) {
+        throw new Error("Finding adjudication is not configured.");
+      }
+      adjudicationModel = model;
+      const adjudicationStartedAt = Date.now();
+      try {
+        const adjudicated = await dependencies.adjudicateReview(
+          buildAdjudicationPrompt({
+            candidates: prepared.candidates,
+            diffHunks: getRelevantDiffHunks(prepared.candidates, processedDiff.files),
+            changedFileContext: fullFileContext.files,
+            relatedCodeContext: relatedCodeContext.files,
+          }),
+          { model },
+          { deadline: llmDeadline },
+        );
+        const parsedAdjudication = adjudicationOutputSchema.safeParse(adjudicated.output);
+        if (parsedAdjudication.success) {
+          const decision = applyAdjudication(
+            prepared.candidates,
+            parsedAdjudication.data,
+            prepared.rejectedCount,
+          );
+          gatedReview = decision.review;
+          rejectedFindings = decision.rejectedCount;
+          manualCheckCandidates = decision.manualCount;
+        } else {
+          rejectedFindings += prepared.candidates.length;
+        }
+        totalUsage = addUsage(totalUsage, adjudicated.usage);
+      } catch (error) {
+        if (!(error instanceof ReviewFailedError) || (!error.timedOut && error.retryable)) {
+          throw error;
+        }
+        rejectedFindings += prepared.candidates.length;
+      } finally {
+        adjudicationDurationMs = Date.now() - adjudicationStartedAt;
+      }
+    }
+
+    const markdown = renderReview(gatedReview, {
       filesReviewed: processedDiff.files.length,
       skippedFiles: processedDiff.skippedFiles,
       headSha: job.headSha,
@@ -318,13 +416,18 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     await dependencies.queries.markReviewCompleted(job.installationId, review.id, {
       reviewMarkdown: markdown,
       commentId,
-      verdict: generated.output.verdict,
-      ...severityCounts(generated.output),
+      verdict: gatedReview.verdict,
+      ...severityCounts(gatedReview),
+      candidateFindings: generatedCandidates.length,
+      rejectedFindings,
+      manualCheckCandidates,
+      adjudicationModel,
+      adjudicationDurationMs,
       skippedFiles: processedDiff.skippedFiles,
       model,
-      inputTokens: generated.usage.inputTokens,
-      outputTokens: generated.usage.outputTokens,
-      durationMs: generated.durationMs,
+      inputTokens: totalUsage.inputTokens,
+      outputTokens: totalUsage.outputTokens,
+      durationMs: Date.now() - reviewStartedAt,
     });
     return {
       status: "completed" as const,

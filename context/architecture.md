@@ -80,6 +80,15 @@
   unique match; symlink entries are excluded. Related retrieval uses the same
   installation, head SHA, byte/token budget, request cap, and deadline as
   full-file context.
+- Feature 24 treats the first structured result as evidence-bearing candidate
+  findings. Trusted code assigns allowlisted ids and validates candidate paths
+  and added lines against the reviewed diff. A separate no-tool adjudication
+  call receives only delimited candidates, relevant hunks, and selected
+  context; only confirmed candidates reach rendering and severity counts.
+  Generation and adjudication share one total LLM deadline, while
+  adjudication has a bounded output-token budget. Timeout or malformed
+  adjudication fails closed by suppressing unverified candidates. Review rows
+  store only aggregate candidate/decision counts and adjudication model/time.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
