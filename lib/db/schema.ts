@@ -83,6 +83,11 @@ export const reviews = pgTable(
     findingsMedium: integer("findings_medium").notNull().default(0),
     findingsLow: integer("findings_low").notNull().default(0),
     findingsInfo: integer("findings_info").notNull().default(0),
+    candidateFindings: integer("candidate_findings").notNull().default(0),
+    rejectedFindings: integer("rejected_findings").notNull().default(0),
+    manualCheckCandidates: integer("manual_check_candidates").notNull().default(0),
+    adjudicationModel: text("adjudication_model"),
+    adjudicationDurationMs: integer("adjudication_duration_ms"),
     skippedFiles: text("skipped_files")
       .array()
       .notNull()

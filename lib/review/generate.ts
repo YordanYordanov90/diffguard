@@ -5,13 +5,23 @@ import {
   TypeValidationError,
   type LanguageModel,
 } from "ai";
+import { z } from "zod";
 
-import { LLM_TIMEOUT_MS } from "@/lib/config/constants";
+import {
+  ADJUDICATION_OUTPUT_TOKEN_BUDGET,
+  LLM_TIMEOUT_MS,
+  REVIEW_OUTPUT_TOKEN_BUDGET,
+} from "@/lib/config/constants";
 import type { Env } from "@/lib/config/env";
 import { getModel, type InstallationModelConfig } from "@/lib/config/model";
 
 import type { ReviewPrompt } from "./prompt";
-import { reviewOutputSchema, type ReviewOutput } from "./schema";
+import {
+  adjudicationOutputSchema,
+  candidateReviewOutputSchema,
+  type AdjudicationOutput,
+  type CandidateReviewOutput,
+} from "./schema";
 
 type Usage = {
   inputTokens: number | null;
@@ -19,28 +29,36 @@ type Usage = {
 };
 
 type GenerateObjectResult = {
-  object: ReviewOutput;
+  object: unknown;
   usage?: { inputTokens?: number; outputTokens?: number };
 };
 
 type GenerateObjectFunction = (options: {
   model: LanguageModel;
-  schema: typeof reviewOutputSchema;
+  schema: z.ZodType;
   system: string;
   prompt: string;
   abortSignal: AbortSignal;
   maxRetries: number;
+  maxOutputTokens?: number;
 }) => Promise<GenerateObjectResult>;
 
-export type GenerateReviewOptions = {
+export type StructuredGenerationOptions = {
   model?: LanguageModel;
   runtimeEnv?: Env;
   timeoutMs?: number;
+  deadline?: number;
   generateObjectFn?: GenerateObjectFunction;
 };
 
 export type GeneratedReview = {
-  output: ReviewOutput;
+  output: CandidateReviewOutput;
+  usage: Usage;
+  durationMs: number;
+};
+
+export type GeneratedAdjudication = {
+  output: AdjudicationOutput;
   usage: Usage;
   durationMs: number;
 };
@@ -48,16 +66,19 @@ export type GeneratedReview = {
 export class ReviewFailedError extends Error {
   readonly cause: unknown;
   readonly retryable: boolean;
+  readonly timedOut: boolean;
 
   constructor(
     message = "The review could not be generated.",
     cause?: unknown,
     retryable = true,
+    timedOut = false,
   ) {
     super(message);
     this.name = "ReviewFailedError";
     this.cause = cause;
     this.retryable = retryable;
+    this.timedOut = timedOut;
   }
 }
 
@@ -111,7 +132,7 @@ async function withTimeout<T>(
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       controller.abort();
-      reject(new ReviewFailedError("The review generation timed out."));
+      reject(new ReviewFailedError("The review generation timed out.", undefined, true, true));
     }, timeoutMs);
   });
 
@@ -122,16 +143,18 @@ async function withTimeout<T>(
   }
 }
 
-export async function generateReview(
+async function generateStructured<T>(
   prompt: ReviewPrompt,
   installation: InstallationModelConfig,
-  options: GenerateReviewOptions = {},
-): Promise<GeneratedReview> {
+  schema: z.ZodType<T>,
+  options: StructuredGenerationOptions,
+  maxOutputTokens?: number,
+): Promise<{ output: T; usage: Usage; durationMs: number }> {
   const model = options.model ?? getModel(installation, options.runtimeEnv);
-  const generate = options.generateObjectFn ?? (generateObject as GenerateObjectFunction);
+  const generate = options.generateObjectFn ?? (generateObject as unknown as GenerateObjectFunction);
   const controller = new AbortController();
   const startedAt = Date.now();
-  const deadline = startedAt + (options.timeoutMs ?? LLM_TIMEOUT_MS);
+  const deadline = options.deadline ?? startedAt + (options.timeoutMs ?? LLM_TIMEOUT_MS);
   const usage: Usage = { inputTokens: null, outputTokens: null };
   let userPrompt = prompt.user;
 
@@ -141,18 +164,22 @@ export async function generateReview(
         const result = await withTimeout(
           generate({
             model,
-            schema: reviewOutputSchema,
+            schema,
             system: prompt.system,
             prompt: userPrompt,
             abortSignal: controller.signal,
             maxRetries: 0,
+            ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
           }),
           controller,
           deadline,
         );
         addUsage(usage, result);
-
-        return { output: result.object, usage, durationMs: Date.now() - startedAt };
+        return {
+          output: result.object as T,
+          usage,
+          durationMs: Date.now() - startedAt,
+        };
       } catch (error) {
         const failedUsage = usageFromError(error);
         usage.inputTokens = (usage.inputTokens ?? 0) + (failedUsage.inputTokens ?? 0);
@@ -173,4 +200,32 @@ export async function generateReview(
   }
 
   throw new ReviewFailedError();
+}
+
+export async function generateReview(
+  prompt: ReviewPrompt,
+  installation: InstallationModelConfig,
+  options: StructuredGenerationOptions = {},
+): Promise<GeneratedReview> {
+  return generateStructured(
+    prompt,
+    installation,
+    candidateReviewOutputSchema,
+    options,
+    REVIEW_OUTPUT_TOKEN_BUDGET,
+  );
+}
+
+export async function adjudicateReview(
+  prompt: ReviewPrompt,
+  installation: InstallationModelConfig,
+  options: StructuredGenerationOptions = {},
+): Promise<GeneratedAdjudication> {
+  return generateStructured(
+    prompt,
+    installation,
+    adjudicationOutputSchema,
+    options,
+    ADJUDICATION_OUTPUT_TOKEN_BUDGET,
+  );
 }

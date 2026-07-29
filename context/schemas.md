@@ -14,6 +14,8 @@ SkipReason   = "draft" | "bot_author" | "skip_keyword" | "daily_cap"
 Severity     = "critical" | "high" | "medium" | "low" | "info"
 Category     = "security" | "bug" | "quality" | "performance"
 Verdict      = "approve" | "comment" | "concerns"
+FindingConfidence = "low" | "medium" | "high"
+FindingDecision   = "confirmed" | "rejected" | "manual_verification"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -58,6 +60,11 @@ findings_high     integer NOT NULL DEFAULT 0
 findings_medium   integer NOT NULL DEFAULT 0
 findings_low      integer NOT NULL DEFAULT 0
 findings_info     integer NOT NULL DEFAULT 0
+candidate_findings       integer NOT NULL DEFAULT 0
+rejected_findings        integer NOT NULL DEFAULT 0
+manual_check_candidates  integer NOT NULL DEFAULT 0
+adjudication_model       text NULL
+adjudication_duration_ms integer NULL
 skipped_files    text[] NOT NULL DEFAULT '{}'  // over-budget disclosure
 model            text NULL
 input_tokens     integer NULL
@@ -143,11 +150,50 @@ ReviewOutput = {
   verdict:  Verdict
   findings: Finding[]         // may be empty
 }
+
+SuggestedChange = {
+  startLine:   number
+  endLine:     number
+  replacement: string
+}
+
+FindingCandidate = Finding & {
+  confidence:                  FindingConfidence
+  observedBehavior:            string
+  causalPath:                  string
+  violatedInvariant:           string
+  requiresRuntimeVerification: boolean
+  suggestedChange:             SuggestedChange | null
+}
+
+CandidateReviewOutput = {
+  summary:    string
+  verdict:    Verdict
+  candidates: FindingCandidate[]
+}
+
+FindingAdjudication = {
+  candidateId: string
+  decision:    FindingDecision
+  reason:      string
+}
+
+AdjudicationOutput = {
+  summary:   string
+  verdict:   Verdict
+  decisions: FindingAdjudication[]
+}
 ```
 
-Rules: `generateObject` with this schema; on Zod failure retry once with
-the validation error appended; on second failure → status `failed`, no
-comment posted. Severity counts roll up into `reviews.findings_*` columns.
+Rules: `generateObject` with these schemas; on Zod failure each structured
+call retries once with the validation error appended. The first call produces
+candidates; trusted code validates their file and changed line against the
+parsed diff and assigns candidate ids. The independent second call receives
+only allowlisted candidates and delimited evidence. Only `confirmed`
+candidates become the publishable `ReviewOutput`; rejected and
+manual-verification candidates never affect counts or output. Malformed,
+missing, duplicate, or arbitrary adjudication ids confirm nothing for the
+affected candidate.
 
 ## Webhook Boundary (Zod — validated after HMAC verification)
 
@@ -253,7 +299,7 @@ never persisted.
 
 ## Planned Review-Quality Contracts
 
-The contracts below belong to Features 22–34 and are **not implemented yet**.
+The remaining contracts below belong to Features 25–34 and are **not implemented yet**.
 They are the shape source of truth when each numbered feature begins. Move
 each contract into the implemented sections above, and update the matching
 Zod/Drizzle code in the same increment.
@@ -262,8 +308,6 @@ Zod/Drizzle code in the same increment.
 
 ```ts
 ReviewMode       = "full" | "incremental" | "fallback_full"
-FindingConfidence = "low" | "medium" | "high"
-FindingDecision   = "confirmed" | "rejected" | "manual_verification"
 FindingLifecycle  = "open" | "resolved" | "dismissed"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
@@ -271,17 +315,12 @@ IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-### Planned reviews additions (Features 24, 27, and 29)
+### Planned reviews additions (Features 27 and 29)
 
 ```ts
 review_mode              ReviewMode NOT NULL DEFAULT "full"
 compared_from_sha        text NULL       // prior completed head for incremental
 linked_issue_assessments jsonb NOT NULL DEFAULT "[]"
-candidate_findings       integer NOT NULL DEFAULT 0
-rejected_findings        integer NOT NULL DEFAULT 0
-manual_check_candidates  integer NOT NULL DEFAULT 0
-adjudication_model       text NULL
-adjudication_duration_ms integer NULL
 ```
 
 `compared_from_sha`, like `head_sha`, is a 40-character hexadecimal SHA.
@@ -412,7 +451,7 @@ PRIMARY KEY (repository_id, pr_number)
 INDEX (installation_id, repository_id, pr_number)
 ```
 
-### Planned structured LLM contracts (Features 24–29 and 34)
+### Planned structured LLM contracts (Features 25–29 and 34)
 
 ```ts
 SuggestedChange = {

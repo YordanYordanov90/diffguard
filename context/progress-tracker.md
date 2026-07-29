@@ -7,8 +7,8 @@ Update this file after every meaningful implementation change.
 - Phase 1 core pipeline and dashboard foundation are complete.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Feature 22
-  implementation is complete, Feature 23 is underway, and Feature 22 final
-  acceptance verification is pending.
+  implementation is complete, Feature 23 is underway, Feature 24 is
+  implemented, and Feature 22 final acceptance verification is pending.
 
 ## Current Goal
 
@@ -212,6 +212,17 @@ Update this file after every meaningful implementation change.
   repository-path normalization, final prompt-budget trimming, and aggregate
   runtime metadata are implemented. Full automated tests, lint, and production
   build pass.
+- Feature 24 (Finding Evidence & False-Positive Gate) — implementation
+  completed 2026-07-29: candidate findings now carry bounded evidence fields,
+  trusted code validates changed-file locations and assigns candidate ids, and
+  a separate no-tool adjudication call confirms only allowlisted candidates.
+  Rejected and manual-verification candidates are suppressed from markdown,
+  severity counts, and dashboard attention. Generation and adjudication share
+  one deadline; malformed or timed-out adjudication fails closed. Aggregate
+  candidate/decision telemetry is persisted through a Drizzle migration.
+  Automated evidence, adversarial, cost, timeout, lint, test, and
+  production-build checks pass; deployed PR #38 replay remains acceptance
+  verification.
 
 ## In Progress
 
@@ -223,13 +234,14 @@ Update this file after every meaningful implementation change.
   metadata, shared bounded retrieval, separate untrusted prompt context, and
   aggregate related-context metadata are implemented; final adversarial,
   end-to-end, and beta comparison checks remain.
+- Feature 24 deployed acceptance verification: replay PR #38 at `3dfdbfb`
+  and confirm both documented false positives remain finding-free.
 
 ## Next Up
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
 2. Implement the review-quality roadmap in dependency order:
-   - Feature 24: independent finding evidence/false-positive adjudication;
    - Features 25–26: durable findings, inline comments, suggested changes;
    - Features 27–28: incremental review and finding reconciliation;
    - Feature 29: linked GitHub Issue validation;

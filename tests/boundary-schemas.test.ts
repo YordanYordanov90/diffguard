@@ -6,7 +6,11 @@ import {
   pullRequestEventSchema,
 } from "@/lib/github/events";
 import { reviewJobSchema } from "@/lib/review/job";
-import { reviewOutputSchema } from "@/lib/review/schema";
+import {
+  adjudicationOutputSchema,
+  candidateReviewOutputSchema,
+  reviewOutputSchema,
+} from "@/lib/review/schema";
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
 
@@ -94,5 +98,53 @@ describe("review boundary schemas", () => {
         findings: [],
       }),
     ).toThrow();
+  });
+
+  it("requires evidence fields for candidate findings and bounded decisions", () => {
+    expect(() => candidateReviewOutputSchema.parse({
+      summary: "Candidate",
+      verdict: "comment",
+      candidates: [{
+        severity: "high",
+        category: "security",
+        file: "src/auth.ts",
+        line: 4,
+        title: "Unsafe path",
+        detail: "A concrete issue.",
+        suggestion: null,
+        confidence: "high",
+        observedBehavior: "Observed behavior.",
+        causalPath: "Causal path.",
+        violatedInvariant: "Invariant.",
+        requiresRuntimeVerification: false,
+        suggestedChange: null,
+      }],
+    })).not.toThrow();
+
+    expect(() => candidateReviewOutputSchema.parse({
+      summary: "Candidate",
+      verdict: "comment",
+      candidates: [{
+        severity: "high",
+        category: "security",
+        file: "src/auth.ts",
+        line: 4,
+        title: "Unsafe path",
+        detail: "A concrete issue.",
+        suggestion: null,
+        confidence: "high",
+        observedBehavior: "",
+        causalPath: "Causal path.",
+        violatedInvariant: "Invariant.",
+        requiresRuntimeVerification: false,
+        suggestedChange: null,
+      }],
+    })).toThrow();
+
+    expect(() => adjudicationOutputSchema.parse({
+      summary: "Confirmed one issue.",
+      verdict: "concerns",
+      decisions: [{ candidateId: "candidate-1", decision: "confirmed", reason: "Evidence." }],
+    })).not.toThrow();
   });
 });
