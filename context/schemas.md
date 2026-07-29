@@ -141,13 +141,14 @@ PullRequestReviewCommentInput = {
 
 CreatePullRequestReviewResult = {
   reviewId: number
-  comments: {
-    id: number
-    path: string
-    line: number | null
-    startLine: number | null
-    body: string
-  }[]
+}
+
+CreatedPullRequestReviewComment = {
+  id: number
+  path: string
+  line: number | null
+  startLine: number | null
+  body: string
 }
 ```
 

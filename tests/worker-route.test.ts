@@ -5,6 +5,7 @@ import {
   type ReviewWorkerDependencies,
 } from "@/lib/workers/review";
 import { ReviewFailedError } from "@/lib/review/generate";
+import { renderInlineCommentBody } from "@/lib/review/inline";
 
 const headSha = "0123456789abcdef0123456789abcdef01234567";
 const job = {
@@ -89,6 +90,16 @@ function storedInlineFinding() {
     suggestion: null,
     suggestedChange: null,
   };
+}
+
+function inlineBody(title: string, detail: string, suggestion: string | null = null) {
+  return renderInlineCommentBody({
+    severity: "high",
+    title,
+    detail,
+    suggestion,
+    suggestedChange: null,
+  });
 }
 
 function configureConfirmedInlineFinding(dependencies: ReviewWorkerDependencies) {
@@ -305,7 +316,7 @@ describe("review worker route", () => {
             path: "src/row.tsx",
             line: 1,
             startLine: null,
-            body: "inline",
+            body: inlineBody("Confirmed changed behavior", "Detail"),
           },
         ]),
       },
@@ -486,7 +497,11 @@ describe("review worker route", () => {
             path: "src/row.tsx",
             line: 1,
             startLine: null,
-            body: "inline",
+            body: inlineBody(
+              "Confirmed changed behavior",
+              "The changed behavior breaks the invariant.",
+              "Use a safe value.",
+            ),
           },
         ]),
       },
@@ -671,7 +686,7 @@ describe("review worker route", () => {
               path: "src/row.tsx",
               line: 1,
               startLine: null,
-              body: "inline",
+              body: inlineBody("Inline candidate", "Detail"),
             },
           ]),
       },
@@ -689,6 +704,88 @@ describe("review worker route", () => {
       8801,
     );
     expect(dependencies.github.upsertComment).toHaveBeenCalled();
+  });
+
+  it("matches same-coordinate inline comments by their rendered body", async () => {
+    const first = {
+      ...storedInlineFinding(),
+      id: "finding-first",
+      fingerprint: "fp-first",
+      title: "First inline candidate",
+    };
+    const second = {
+      ...storedInlineFinding(),
+      id: "finding-second",
+      fingerprint: "fp-second",
+      title: "Second inline candidate",
+    };
+    const dependencies = createDependencies(
+      { upsertConfirmedFindings: vi.fn().mockResolvedValue([first, second]) },
+      {
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          "diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new",
+        ),
+        createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 55 }),
+        listPullRequestReviewComments: vi.fn().mockResolvedValue([
+          {
+            id: 8802,
+            path: "src/row.tsx",
+            line: 1,
+            startLine: null,
+            body: inlineBody("Second inline candidate", "Detail"),
+          },
+          {
+            id: 8801,
+            path: "src/row.tsx",
+            line: 1,
+            startLine: null,
+            body: inlineBody("First inline candidate", "Detail"),
+          },
+        ]),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [first, second].map((finding) => ({
+          ...finding,
+          observedBehavior: "Observed",
+          causalPath: "Path",
+          violatedInvariant: "Invariant",
+          requiresRuntimeVerification: false,
+        })),
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Confirmed.",
+        verdict: "concerns",
+        decisions: ["candidate-1", "candidate-2"].map((candidateId) => ({
+          candidateId,
+          decision: "confirmed" as const,
+          reason: "ok",
+        })),
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.queries.attachFindingGitHubCommentId).toHaveBeenCalledWith(
+      42,
+      "finding-first",
+      8801,
+    );
+    expect(dependencies.queries.attachFindingGitHubCommentId).toHaveBeenCalledWith(
+      42,
+      "finding-second",
+      8802,
+    );
   });
 
   it("does not persist rejected or manual-verification candidates as finding rows", async () => {

@@ -288,6 +288,7 @@ function matchPublishedCommentIds(
       (candidate) =>
         candidate.path === comment.path &&
         candidate.line === comment.line &&
+        candidate.body === comment.body &&
         (comment.startLine === undefined ||
           candidate.startLine === comment.startLine ||
           candidate.startLine === null),

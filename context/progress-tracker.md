@@ -251,6 +251,9 @@ Update this file after every meaningful implementation change.
   the worker rechecks the PR head immediately before inline publication;
   accepted review posts retry only comment-ID retrieval, never the POST; and a
   suggested-change range must contain the confirmed finding line.
+- PR #57 DiffGuard low-risk feedback — implementation completed 2026-07-29:
+  published comment-ID matching also requires the deterministic rendered body,
+  so same-coordinate inline findings cannot attach to each other's comment.
 
 ## In Progress
 
