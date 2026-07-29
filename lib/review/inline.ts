@@ -240,6 +240,12 @@ function prepareComment(
   let suggestedChange: SuggestedChange | null = null;
   if (finding.suggestedChange) {
     suggestedChange = validateSuggestedChange(patch, finding.suggestedChange);
+    if (
+      suggestedChange &&
+      (finding.line < suggestedChange.startLine || finding.line > suggestedChange.endLine)
+    ) {
+      suggestedChange = null;
+    }
   }
 
   if (suggestedChange) {

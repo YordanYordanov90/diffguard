@@ -49,7 +49,8 @@ function createDependencies(
       fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
       fetchRepositoryTree: vi.fn().mockResolvedValue({ status: "fetched", paths: [] }),
       upsertComment: vi.fn().mockResolvedValue(9001),
-      createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 1, comments: [] }),
+      createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 1 }),
+      listPullRequestReviewComments: vi.fn().mockResolvedValue([]),
       ...githubOverrides,
     },
     generateReview: vi.fn().mockResolvedValue({
@@ -70,6 +71,54 @@ function request(payload: unknown = job) {
     method: "POST",
     headers: { "upstash-signature": "signature" },
     body: JSON.stringify(payload),
+  });
+}
+
+function storedInlineFinding() {
+  return {
+    id: "finding-1",
+    fingerprint: "fp-1",
+    githubCommentId: null,
+    confidence: "high" as const,
+    severity: "high" as const,
+    category: "bug" as const,
+    file: "src/row.tsx",
+    line: 1,
+    title: "Inline candidate",
+    detail: "Detail",
+    suggestion: null,
+    suggestedChange: null,
+  };
+}
+
+function configureConfirmedInlineFinding(dependencies: ReviewWorkerDependencies) {
+  dependencies.generateReview = vi.fn().mockResolvedValue({
+    output: {
+      summary: "Draft",
+      verdict: "concerns",
+      candidates: [{
+        ...storedInlineFinding(),
+        observedBehavior: "Observed",
+        causalPath: "Path",
+        violatedInvariant: "Invariant",
+        requiresRuntimeVerification: false,
+      }],
+    },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    durationMs: 1,
+  });
+  dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+    output: {
+      summary: "Confirmed.",
+      verdict: "concerns",
+      decisions: [{
+        candidateId: "candidate-1",
+        decision: "confirmed",
+        reason: "ok",
+      }],
+    },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    durationMs: 1,
   });
 }
 
@@ -249,16 +298,16 @@ describe("review worker route", () => {
         ),
         createPullRequestReview: vi.fn().mockResolvedValue({
           reviewId: 55,
-          comments: [
-            {
-              id: 8801,
-              path: "src/row.tsx",
-              line: 1,
-              startLine: null,
-              body: "inline",
-            },
-          ],
         }),
+        listPullRequestReviewComments: vi.fn().mockResolvedValue([
+          {
+            id: 8801,
+            path: "src/row.tsx",
+            line: 1,
+            startLine: null,
+            body: "inline",
+          },
+        ]),
       },
     );
     dependencies.generateReview = vi.fn().mockResolvedValue({
@@ -430,16 +479,16 @@ describe("review worker route", () => {
         ),
         createPullRequestReview: vi.fn().mockResolvedValue({
           reviewId: 55,
-          comments: [
-            {
-              id: 8801,
-              path: "src/row.tsx",
-              line: 1,
-              startLine: null,
-              body: "inline",
-            },
-          ],
         }),
+        listPullRequestReviewComments: vi.fn().mockResolvedValue([
+          {
+            id: 8801,
+            path: "src/row.tsx",
+            line: 1,
+            startLine: null,
+            body: "inline",
+          },
+        ]),
       },
     );
     dependencies.generateReview = vi.fn().mockResolvedValue({
@@ -581,6 +630,65 @@ describe("review worker route", () => {
     expect(dependencies.queries.attachFindingGitHubCommentId).not.toHaveBeenCalled();
     expect(dependencies.github.upsertComment).toHaveBeenCalled();
     expect(dependencies.queries.markReviewCompleted).toHaveBeenCalled();
+  });
+
+  it("skips inline publication when the head changes during review", async () => {
+    const staleHeadSha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    const dependencies = createDependencies(
+      { upsertConfirmedFindings: vi.fn().mockResolvedValue([storedInlineFinding()]) },
+      {
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+        ),
+        fetchPrHeadSha: vi.fn()
+          .mockResolvedValueOnce(headSha)
+          .mockResolvedValueOnce(staleHeadSha),
+      },
+    );
+    configureConfirmedInlineFinding(dependencies);
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchPrHeadSha).toHaveBeenCalledTimes(2);
+    expect(dependencies.github.createPullRequestReview).not.toHaveBeenCalled();
+    expect(dependencies.github.upsertComment).toHaveBeenCalled();
+  });
+
+  it("retries comment lookup without reposting an accepted review", async () => {
+    const dependencies = createDependencies(
+      { upsertConfirmedFindings: vi.fn().mockResolvedValue([storedInlineFinding()]) },
+      {
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+        ),
+        createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 55 }),
+        listPullRequestReviewComments: vi.fn()
+          .mockRejectedValueOnce(new Error("GitHub comment lookup failed."))
+          .mockResolvedValueOnce([
+            {
+              id: 8801,
+              path: "src/row.tsx",
+              line: 1,
+              startLine: null,
+              body: "inline",
+            },
+          ]),
+      },
+    );
+    configureConfirmedInlineFinding(dependencies);
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.createPullRequestReview).toHaveBeenCalledOnce();
+    expect(dependencies.github.listPullRequestReviewComments).toHaveBeenCalledTimes(2);
+    expect(dependencies.queries.attachFindingGitHubCommentId).toHaveBeenCalledWith(
+      42,
+      "finding-1",
+      8801,
+    );
+    expect(dependencies.github.upsertComment).toHaveBeenCalled();
   });
 
   it("does not persist rejected or manual-verification candidates as finding rows", async () => {

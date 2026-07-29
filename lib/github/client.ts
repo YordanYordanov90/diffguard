@@ -89,7 +89,6 @@ export type CreatedPullRequestReviewComment = {
 
 export type CreatePullRequestReviewResult = {
   reviewId: number;
-  comments: CreatedPullRequestReviewComment[];
 };
 
 function createDefaultDependencies(): GitHubClientDependencies {
@@ -366,10 +365,7 @@ export function createGitHubClient(
       return z.object({ id: z.number().int().positive() }).parse(response.data).id;
     },
 
-    /**
-     * Submit one COMMENT review with batched inline comments at the exact head SHA.
-     * Never uses APPROVE or REQUEST_CHANGES. Uses line/side (not position).
-     */
+    /** Submit one COMMENT review at the exact head SHA. */
     async createPullRequestReview(
       installationId: number,
       repoFullName: string,
@@ -408,13 +404,25 @@ export function createGitHubClient(
       );
 
       const review = pullRequestReviewSchema.parse(response.data);
+      return { reviewId: review.id };
+    },
+
+    /** List comments from a review that GitHub has already accepted. */
+    async listPullRequestReviewComments(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      reviewId: number,
+    ): Promise<CreatedPullRequestReviewComment[]> {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
       const listed = await octokit.request(
         "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/comments",
         {
           owner,
           repo,
           pull_number: prNumber,
-          review_id: review.id,
+          review_id: reviewId,
           per_page: 100,
         },
       );
@@ -430,7 +438,7 @@ export function createGitHubClient(
           body: comment.body,
         }));
 
-      return { reviewId: review.id, comments: parsedComments };
+      return parsedComments;
     },
 
     /**
@@ -479,6 +487,9 @@ export const githubClient = {
   createPullRequestReview: (
     ...args: Parameters<GitHubClient["createPullRequestReview"]>
   ) => getDefaultClient().createPullRequestReview(...args),
+  listPullRequestReviewComments: (
+    ...args: Parameters<GitHubClient["listPullRequestReviewComments"]>
+  ) => getDefaultClient().listPullRequestReviewComments(...args),
   getUserInstallations: (
     ...args: Parameters<GitHubClient["getUserInstallations"]>
   ) => getDefaultClient().getUserInstallations(...args),
@@ -492,5 +503,6 @@ export const {
   fetchRepositoryTree,
   upsertComment,
   createPullRequestReview,
+  listPullRequestReviewComments,
   getUserInstallations,
 } = githubClient;

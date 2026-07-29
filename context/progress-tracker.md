@@ -247,6 +247,10 @@ Update this file after every meaningful implementation change.
   findings. Pipeline order is now findings → inline → summary → complete so
   inline ids can bind to durable rows. Automated inline, GitHub client, worker,
   lint, test, and production-build checks pass.
+- PR #57 Codex feedback fixes — implementation completed 2026-07-29:
+  the worker rechecks the PR head immediately before inline publication;
+  accepted review posts retry only comment-ID retrieval, never the POST; and a
+  suggested-change range must contain the confirmed finding line.
 
 ## In Progress
 

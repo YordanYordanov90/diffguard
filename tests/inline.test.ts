@@ -173,6 +173,26 @@ describe("inline selection", () => {
     expect(plan.comments[0].line).toBe(2);
   });
 
+  it("keeps suggestions bound to the confirmed finding line", () => {
+    const plan = planInlineComments(
+      [
+        finding({
+          line: 2,
+          suggestedChange: {
+            startLine: 3,
+            endLine: 3,
+            replacement: "const extra = safe();\n",
+          },
+        }),
+      ],
+      [{ path: "src/auth.ts", patch }],
+    );
+
+    expect(plan.comments[0].line).toBe(2);
+    expect(plan.comments[0].body).not.toContain("```suggestion");
+    expect(plan.comments[0].hasSuggestion).toBe(false);
+  });
+
   it("strips suggestion blocks for retry payloads", () => {
     const body = renderInlineCommentBody({
       severity: "high",

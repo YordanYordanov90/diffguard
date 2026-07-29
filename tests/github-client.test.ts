@@ -255,7 +255,7 @@ describe("GitHub client", () => {
     );
   });
 
-  it("submits one COMMENT review with line/side fields and lists comment ids", async () => {
+  it("submits one COMMENT review and retrieves its comment ids separately", async () => {
     const { client, request } = createMockClient();
 
     await expect(
@@ -267,18 +267,19 @@ describe("GitHub client", () => {
           side: "RIGHT",
         },
       ]),
-    ).resolves.toEqual({
-      reviewId: 6001,
-      comments: [
-        {
-          id: 7001,
-          path: "src/auth.ts",
-          line: 12,
-          startLine: null,
-          body: "inline finding",
-        },
-      ],
-    });
+    ).resolves.toEqual({ reviewId: 6001 });
+
+    await expect(
+      client.listPullRequestReviewComments(42, "owner/repo", 7, 6001),
+    ).resolves.toEqual([
+      {
+        id: 7001,
+        path: "src/auth.ts",
+        line: 12,
+        startLine: null,
+        body: "inline finding",
+      },
+    ]);
 
     expect(request).toHaveBeenCalledWith(
       "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",

@@ -31,7 +31,9 @@ import {
   fetchPrHeadSha,
   fetchRepositoryFile,
   fetchRepositoryTree,
+  listPullRequestReviewComments,
   upsertComment,
+  type CreatedPullRequestReviewComment,
   type CreatePullRequestReviewResult,
   type PullRequestReviewCommentInput,
   type RepositoryTreeResult,
@@ -75,6 +77,9 @@ import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 type StoredFinding = Awaited<ReturnType<typeof upsertConfirmedFindings>>[number];
+type PublishedInlineReview = CreatePullRequestReviewResult & {
+  comments: CreatedPullRequestReviewComment[];
+};
 
 type ReviewQueries = {
   getReviewBySha: (...args: Parameters<typeof getReviewBySha>) => Promise<StoredReview>;
@@ -102,6 +107,7 @@ type GitHubClient = {
   fetchRepositoryTree: typeof fetchRepositoryTree;
   upsertComment: typeof upsertComment;
   createPullRequestReview: typeof createPullRequestReview;
+  listPullRequestReviewComments: typeof listPullRequestReviewComments;
 };
 
 type QStashVerifier = {
@@ -183,6 +189,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       fetchRepositoryTree,
       upsertComment,
       createPullRequestReview,
+      listPullRequestReviewComments,
     },
     generateReview,
     adjudicateReview,
@@ -203,15 +210,42 @@ function toReviewCommentInput(
   };
 }
 
+async function listPublishedInlineReviewComments(
+  dependencies: ReviewWorkerDependencies,
+  job: ReviewJob,
+  reviewId: number,
+): Promise<CreatedPullRequestReviewComment[] | null> {
+  try {
+    return await dependencies.github.listPullRequestReviewComments(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      reviewId,
+    );
+  } catch {
+    try {
+      return await dependencies.github.listPullRequestReviewComments(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+        reviewId,
+      );
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function publishInlineReview(
   dependencies: ReviewWorkerDependencies,
   job: ReviewJob,
   comments: PreparedInlineComment[],
-): Promise<CreatePullRequestReviewResult | null> {
+): Promise<PublishedInlineReview | null> {
   if (comments.length === 0) return null;
 
+  let review: CreatePullRequestReviewResult;
   try {
-    return await dependencies.github.createPullRequestReview(
+    review = await dependencies.github.createPullRequestReview(
       job.installationId,
       job.repoFullName,
       job.prNumber,
@@ -221,7 +255,7 @@ async function publishInlineReview(
   } catch {
     // Retry once without suggestion blocks / multi-line anchors.
     try {
-      return await dependencies.github.createPullRequestReview(
+      review = await dependencies.github.createPullRequestReview(
         job.installationId,
         job.repoFullName,
         job.prNumber,
@@ -233,11 +267,18 @@ async function publishInlineReview(
       return null;
     }
   }
+
+  const published = await listPublishedInlineReviewComments(
+    dependencies,
+    job,
+    review.reviewId,
+  );
+  return published ? { reviewId: review.reviewId, comments: published } : null;
 }
 
 function matchPublishedCommentIds(
   prepared: PreparedInlineComment[],
-  published: CreatePullRequestReviewResult,
+  published: PublishedInlineReview,
 ): Array<{ findingId: string; commentId: number }> {
   const remaining = [...published.comments];
   const matches: Array<{ findingId: string; commentId: number }> = [];
@@ -550,11 +591,14 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       processedDiff.files,
     );
 
-    const publishedInline = await publishInlineReview(
-      dependencies,
-      job,
-      inlinePlan.comments,
+    const latestHeadSha = await dependencies.github.fetchPrHeadSha(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
     );
+    const publishedInline = latestHeadSha.toLowerCase() === job.headSha.toLowerCase()
+      ? await publishInlineReview(dependencies, job, inlinePlan.comments)
+      : null;
     const attachedFindingIds = new Set<string>();
     if (publishedInline) {
       const matches = matchPublishedCommentIds(inlinePlan.comments, publishedInline);

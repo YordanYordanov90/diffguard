@@ -97,10 +97,13 @@
   remain non-persisted.
 - Feature 26 posts at most eight high-confidence inline review comments in one
   GitHub `COMMENT` review (never APPROVE/REQUEST_CHANGES) using `line`/`side`
-  coordinates on the exact head SHA. Suggested-change blocks are included only
-  when the replacement range is fully contained in one reviewed hunk. Inline
-  failure degrades to summary-only; the edit-in-place summary remains canonical.
-  Returned review-comment ids attach to Feature 25 finding rows once.
+  coordinates on a head SHA rechecked immediately before publication.
+  Suggested-change blocks are included only when the replacement range is
+  fully contained in one reviewed hunk and contains the confirmed finding line.
+  Inline failure degrades to summary-only; the edit-in-place summary remains
+  canonical. After GitHub accepts the review POST, comment-ID retrieval retries
+  only its safe GET and never posts a duplicate review. Returned review-comment
+  ids attach to Feature 25 finding rows once.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
