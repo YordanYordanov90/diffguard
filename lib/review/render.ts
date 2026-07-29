@@ -1,9 +1,12 @@
+import type { ReviewMode } from "./baseline";
 import type { Finding, ReviewOutput, Severity } from "./schema";
 
 export type RenderMetadata = {
   filesReviewed: number;
   skippedFiles: string[];
   headSha: string;
+  reviewMode?: ReviewMode;
+  comparedFromSha?: string | null;
 };
 
 const severityRank: Record<Severity, number> = {
@@ -108,6 +111,24 @@ export function renderReview(review: ReviewOutput, metadata: RenderMetadata): st
 
   const skippedFiles = renderSkippedFiles(metadata.skippedFiles);
   if (skippedFiles) sections.push("", skippedFiles);
-  sections.push("", "---", `🛡️ DiffGuard · reviewed commit \`${metadata.headSha.slice(0, 7)}\``);
+  sections.push("", "---", renderFooter(metadata));
   return sections.join("\n");
+}
+
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+function renderFooter(metadata: RenderMetadata): string {
+  const head = shortSha(metadata.headSha);
+  const mode = metadata.reviewMode ?? "full";
+  const from = metadata.comparedFromSha;
+
+  if (mode === "incremental" && from) {
+    return `🛡️ DiffGuard · reviewed commit \`${head}\` · incremental \`${shortSha(from)}\`…\`${head}\``;
+  }
+  if (mode === "fallback_full") {
+    return `🛡️ DiffGuard · reviewed commit \`${head}\` · full review (fallback)`;
+  }
+  return `🛡️ DiffGuard · reviewed commit \`${head}\` · full review`;
 }

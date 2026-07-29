@@ -89,6 +89,15 @@
   adjudication has a bounded output-token budget. Timeout or malformed
   adjudication fails closed by suppressing unverified candidates. Review rows
   store only aggregate candidate/decision counts and adjudication model/time.
+- Feature 27 selects a review baseline after the job is claimed: look up the
+  latest completed review for the same installation/repository/PR, confirm
+  via GitHub that its head is on the current PR and a pure ancestor of the
+  validated job head, then fetch either the previous…head range diff or the
+  full PR diff. Mode (`full` | `incremental` | `fallback_full`) and
+  `compared_from_sha` are stored on the review row and disclosed in the
+  summary footer. An internal `forceFullReview` job flag (Feature 34) forces
+  full mode. Stale-head is checked at claim time and again immediately
+  before publication.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
@@ -102,6 +111,11 @@
 4. A review is idempotent on `(repository, pr_number, head_sha)`:
    re-delivery or retry of a completed review exits cleanly and never
    double-posts or double-counts.
+4a. Incremental reviews use only a server-resolved previous completed head
+    for the same tenant/repository/PR. Previous SHAs are never taken from
+    webhooks or clients. Comparison failures, rewritten history, truncated
+    GitHub comparisons, or missing bases always broaden to the full PR diff
+    (`fallback_full`). Diffs are never persisted either way.
 5. Malformed or schema-invalid LLM output is never posted to a PR
    (one retry, then fail silently with status `failed`).
 6. Webhook and worker payloads are Zod-validated at the boundary even

@@ -5,6 +5,7 @@ import {
   installations,
   repositories,
   reviews,
+  type ReviewMode,
   type SkipReason,
 } from "./schema";
 
@@ -44,6 +45,8 @@ export type ReviewCompletion = {
   reviewMarkdown: string;
   verdict: "approve" | "comment" | "concerns";
   commentId: number;
+  reviewMode: ReviewMode;
+  comparedFromSha: string | null;
   findingsCritical: number;
   findingsHigh: number;
   findingsMedium: number;
@@ -279,6 +282,38 @@ export async function getLatestReviewCommentId(
     .limit(1);
 
   return review?.commentId ?? null;
+}
+
+/**
+ * Latest completed review for the same tenant, repository, and PR.
+ * Used as the incremental baseline — never accept previous SHA from webhooks.
+ */
+export async function getLatestCompletedReviewForPr(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  database: Database = defaultDb,
+) {
+  const [review] = await database
+    .select({
+      id: reviews.id,
+      headSha: reviews.headSha,
+      commentId: reviews.commentId,
+      updatedAt: reviews.updatedAt,
+    })
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.installationId, installationId),
+        eq(reviews.repositoryId, repositoryId),
+        eq(reviews.prNumber, prNumber),
+        eq(reviews.status, "completed"),
+      ),
+    )
+    .orderBy(desc(reviews.updatedAt))
+    .limit(1);
+
+  return review ?? null;
 }
 
 export async function markReviewRunning(

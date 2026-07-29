@@ -87,6 +87,91 @@ describe("GitHub client", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it("compares commits and fetches a range diff with validated SHAs", async () => {
+    const base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const { client, request } = createMockClient();
+    request.mockImplementation(
+      (route: string, params?: { headers?: { accept?: string }; basehead?: string }) => {
+        if (route.includes("/compare/") && params?.headers?.accept?.includes("diff")) {
+          return Promise.resolve({ data: "diff --git a/new.ts b/new.ts" });
+        }
+        if (route.includes("/compare/")) {
+          return Promise.resolve({
+            data: {
+              status: "ahead",
+              ahead_by: 2,
+              behind_by: 0,
+              total_commits: 2,
+              commits: [{}, {}],
+              files: [{ filename: "new.ts" }],
+            },
+          });
+        }
+        if (route.includes("/commits/") && route.includes("/pulls")) {
+          return Promise.resolve({ data: [{ number: 7 }] });
+        }
+        return Promise.resolve({ data: {} });
+      },
+    );
+
+    await expect(
+      client.fetchCommitComparison(42, "owner/repo", base, head),
+    ).resolves.toEqual({
+      status: "compared",
+      comparisonStatus: "ahead",
+      aheadBy: 2,
+      behindBy: 0,
+      truncated: false,
+    });
+    await expect(
+      client.fetchCommitRangeDiff(42, "owner/repo", base, head),
+    ).resolves.toContain("diff --git");
+    await expect(
+      client.isCommitOnPullRequest(42, "owner/repo", 7, base),
+    ).resolves.toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/compare/{basehead}",
+      expect.objectContaining({ basehead: `${base}...${head}` }),
+    );
+  });
+
+  it("marks truncated comparisons and missing bases as unavailable", async () => {
+    const base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const { client, request } = createMockClient();
+    const { RequestError } = await import("octokit");
+
+    request.mockResolvedValueOnce({
+      data: {
+        status: "ahead",
+        ahead_by: 400,
+        behind_by: 0,
+        total_commits: 400,
+        commits: Array.from({ length: 250 }, () => ({})),
+        files: Array.from({ length: 300 }, () => ({ filename: "f.ts" })),
+      },
+    });
+    await expect(
+      client.fetchCommitComparison(42, "owner/repo", base, head),
+    ).resolves.toMatchObject({ status: "compared", truncated: true });
+
+    request.mockRejectedValueOnce(
+      new RequestError("Not Found", 404, {
+        response: {
+          status: 404,
+          headers: {},
+          url: "https://api.github.com",
+          data: {},
+        },
+        request: { method: "GET", url: "https://api.github.com", headers: {} },
+      }),
+    );
+    await expect(
+      client.fetchCommitComparison(42, "owner/repo", base, head),
+    ).resolves.toEqual({ status: "unavailable" });
+  });
+
   it("fetches .aireview.md and truncates decoded instructions", async () => {
     const { client, request } = createMockClient();
 

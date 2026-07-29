@@ -35,6 +35,14 @@ export type SkipReason = (typeof skipReasonEnum.enumValues)[number];
 
 export const verdictEnum = pgEnum("verdict", ["approve", "comment", "concerns"]);
 
+export const reviewModeEnum = pgEnum("review_mode", [
+  "full",
+  "incremental",
+  "fallback_full",
+]);
+
+export type ReviewMode = (typeof reviewModeEnum.enumValues)[number];
+
 export const installations = pgTable("installations", {
   id: bigint("id", { mode: "number" }).primaryKey(),
   accountLogin: text("account_login").notNull(),
@@ -76,6 +84,8 @@ export const reviews = pgTable(
     status: reviewStatusEnum("status").notNull().default("queued"),
     skipReason: skipReasonEnum("skip_reason"),
     verdict: verdictEnum("verdict"),
+    reviewMode: reviewModeEnum("review_mode").notNull().default("full"),
+    comparedFromSha: text("compared_from_sha"),
     reviewMarkdown: text("review_markdown"),
     commentId: bigint("comment_id", { mode: "number" }),
     findingsCritical: integer("findings_critical").notNull().default(0),

@@ -18,6 +18,8 @@ const job = {
   deliveryId: "delivery-1",
 };
 
+const previousHeadSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 function createDependencies(
   overrides: Partial<ReviewWorkerDependencies["queries"]> = {},
   githubOverrides: Partial<ReviewWorkerDependencies["github"]> = {},
@@ -32,6 +34,7 @@ function createDependencies(
       }),
       getInstallationModel: vi.fn().mockResolvedValue("openai/test"),
       getLatestReviewCommentId: vi.fn().mockResolvedValue(null),
+      getLatestCompletedReviewForPr: vi.fn().mockResolvedValue(null),
       countReviewsToday: vi.fn().mockResolvedValue(0),
       markReviewSkipped: vi.fn().mockResolvedValue(null),
       markReviewRunning: vi.fn().mockResolvedValue({ id: "review-1" }),
@@ -42,6 +45,17 @@ function createDependencies(
     github: {
       fetchPrHeadSha: vi.fn().mockResolvedValue(headSha),
       fetchPrDiff: vi.fn().mockResolvedValue(""),
+      fetchCommitComparison: vi.fn().mockResolvedValue({
+        status: "compared",
+        comparisonStatus: "ahead",
+        aheadBy: 1,
+        behindBy: 0,
+        truncated: false,
+      }),
+      fetchCommitRangeDiff: vi.fn().mockResolvedValue(
+        "diff --git a/src/new.ts b/src/new.ts\n@@ -0,0 +1 @@\n+export const n = 1;",
+      ),
+      isCommitOnPullRequest: vi.fn().mockResolvedValue(true),
       fetchInstructionsFile: vi.fn().mockResolvedValue(null),
       fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
       fetchRepositoryTree: vi.fn().mockResolvedValue({ status: "fetched", paths: [] }),
@@ -129,6 +143,8 @@ describe("review worker route", () => {
       expect.objectContaining({
         commentId: 9001,
         reviewMarkdown: expect.stringContaining("DiffGuard Review"),
+        reviewMode: "full",
+        comparedFromSha: null,
         verdict: "approve",
         findingsCritical: 0,
         skippedFiles: [],
@@ -146,6 +162,209 @@ describe("review worker route", () => {
     expect(dependencies.github.upsertComment).toHaveBeenCalledBefore(
       dependencies.queries.markReviewCompleted,
     );
+  });
+
+  it("reviews only the commit range for a normal descendant push", async () => {
+    const rangeDiff =
+      "diff --git a/src/only-new.ts b/src/only-new.ts\n@@ -0,0 +1 @@\n+export const only = true;";
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: 100,
+          updatedAt: new Date("2026-01-01"),
+        }),
+      },
+      {
+        fetchCommitRangeDiff: vi.fn().mockResolvedValue(rangeDiff),
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          "diff --git a/src/old.ts b/src/old.ts\n@@ -1 +1 @@\n-old\n+changed",
+        ),
+      },
+    );
+
+    const response = await handleReviewWorker(request(), dependencies);
+    const body = await responseBody(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      status: "completed",
+      reviewMode: "incremental",
+      comparedFromSha: previousHeadSha,
+    });
+    expect(dependencies.github.fetchCommitComparison).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      previousHeadSha,
+      headSha,
+    );
+    expect(dependencies.github.fetchCommitRangeDiff).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      previousHeadSha,
+      headSha,
+    );
+    expect(dependencies.github.fetchPrDiff).not.toHaveBeenCalled();
+    const prompt = vi.mocked(dependencies.generateReview).mock.calls[0]?.[0];
+    expect(prompt?.user).toContain("src/only-new.ts");
+    expect(prompt?.user).not.toContain("src/old.ts");
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        reviewMode: "incremental",
+        comparedFromSha: previousHeadSha,
+        reviewMarkdown: expect.stringContaining("incremental"),
+      }),
+    );
+  });
+
+  it("falls back to a disclosed full review on force-push / rewritten history", async () => {
+    const fullDiff =
+      "diff --git a/src/rewritten.ts b/src/rewritten.ts\n@@ -0,0 +1 @@\n+export const rewritten = true;";
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: 100,
+          updatedAt: new Date("2026-01-01"),
+        }),
+      },
+      {
+        fetchCommitComparison: vi.fn().mockResolvedValue({
+          status: "compared",
+          comparisonStatus: "diverged",
+          aheadBy: 5,
+          behindBy: 3,
+          truncated: false,
+        }),
+        fetchPrDiff: vi.fn().mockResolvedValue(fullDiff),
+      },
+    );
+
+    const response = await handleReviewWorker(request(), dependencies);
+    const body = await responseBody(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({
+      status: "completed",
+      reviewMode: "fallback_full",
+      comparedFromSha: previousHeadSha,
+    });
+    expect(dependencies.github.fetchCommitRangeDiff).not.toHaveBeenCalled();
+    expect(dependencies.github.fetchPrDiff).toHaveBeenCalledWith(42, "owner/repo", 7);
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        reviewMode: "fallback_full",
+        comparedFromSha: previousHeadSha,
+        reviewMarkdown: expect.stringContaining("full review (fallback)"),
+      }),
+    );
+  });
+
+  it("falls back when the previous commit was deleted", async () => {
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: null,
+          updatedAt: new Date("2026-01-01"),
+        }),
+      },
+      {
+        fetchCommitComparison: vi.fn().mockResolvedValue({ status: "unavailable" }),
+        isCommitOnPullRequest: vi.fn().mockResolvedValue(false),
+      },
+    );
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchPrDiff).toHaveBeenCalled();
+    expect(dependencies.github.fetchCommitRangeDiff).not.toHaveBeenCalled();
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({ reviewMode: "fallback_full" }),
+    );
+  });
+
+  it("falls back when GitHub truncates the comparison", async () => {
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: null,
+          updatedAt: new Date("2026-01-01"),
+        }),
+      },
+      {
+        fetchCommitComparison: vi.fn().mockResolvedValue({
+          status: "compared",
+          comparisonStatus: "ahead",
+          aheadBy: 40,
+          behindBy: 0,
+          truncated: true,
+        }),
+      },
+    );
+
+    await handleReviewWorker(request(), dependencies);
+
+    expect(dependencies.github.fetchPrDiff).toHaveBeenCalled();
+    expect(dependencies.github.fetchCommitRangeDiff).not.toHaveBeenCalled();
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({ reviewMode: "fallback_full" }),
+    );
+  });
+
+  it("honors the internal forceFullReview override", async () => {
+    const dependencies = createDependencies({
+      getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+        id: "review-0",
+        headSha: previousHeadSha,
+        commentId: null,
+        updatedAt: new Date("2026-01-01"),
+      }),
+    });
+
+    await handleReviewWorker(request({ ...job, forceFullReview: true }), dependencies);
+
+    expect(dependencies.queries.getLatestCompletedReviewForPr).not.toHaveBeenCalled();
+    expect(dependencies.github.fetchCommitComparison).not.toHaveBeenCalled();
+    expect(dependencies.github.fetchPrDiff).toHaveBeenCalled();
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({ reviewMode: "full", comparedFromSha: null }),
+    );
+  });
+
+  it("skips publication when the head becomes stale after generation", async () => {
+    const dependencies = createDependencies();
+    dependencies.github.fetchPrHeadSha = vi
+      .fn()
+      .mockResolvedValueOnce(headSha)
+      .mockResolvedValueOnce("cccccccccccccccccccccccccccccccccccccccc");
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.queries.markReviewSkipped).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      "stale_sha",
+    );
+    expect(dependencies.github.upsertComment).not.toHaveBeenCalled();
+    expect(dependencies.queries.markReviewCompleted).not.toHaveBeenCalled();
   });
 
   it("gates candidates before rendering and persists aggregate adjudication telemetry", async () => {

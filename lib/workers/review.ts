@@ -13,6 +13,7 @@ import { parseEnv } from "@/lib/config/env";
 import type {
   countReviewsToday,
   getInstallationModel,
+  getLatestCompletedReviewForPr,
   getLatestReviewCommentId,
   getReviewBySha,
   markReviewCompleted,
@@ -21,14 +22,24 @@ import type {
   markReviewSkipped,
 } from "@/lib/db/queries";
 import {
+  fetchCommitComparison,
+  fetchCommitRangeDiff,
   fetchInstructionsFile,
   fetchPrDiff,
   fetchPrHeadSha,
   fetchRepositoryFile,
   fetchRepositoryTree,
+  isCommitOnPullRequest,
   upsertComment,
+  type CommitComparisonResult,
   type RepositoryTreeResult,
 } from "@/lib/github/client";
+import {
+  planReviewBaseline,
+  type BaselinePlan,
+  type CommitComparison,
+  type ReviewMode,
+} from "@/lib/review/baseline";
 import { processDiff } from "@/lib/review/diff";
 import {
   adjudicateReview,
@@ -60,11 +71,15 @@ import {
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
+type CompletedBaseline = Awaited<ReturnType<typeof getLatestCompletedReviewForPr>>;
 
 type ReviewQueries = {
   getReviewBySha: (...args: Parameters<typeof getReviewBySha>) => Promise<StoredReview>;
   getInstallationModel: (...args: Parameters<typeof getInstallationModel>) => Promise<string | null>;
   getLatestReviewCommentId: (...args: Parameters<typeof getLatestReviewCommentId>) => Promise<number | null>;
+  getLatestCompletedReviewForPr: (
+    ...args: Parameters<typeof getLatestCompletedReviewForPr>
+  ) => Promise<CompletedBaseline>;
   countReviewsToday: (...args: Parameters<typeof countReviewsToday>) => Promise<number>;
   markReviewSkipped: (...args: Parameters<typeof markReviewSkipped>) => Promise<unknown>;
   markReviewRunning: (...args: Parameters<typeof markReviewRunning>) => Promise<StoredReview>;
@@ -75,6 +90,9 @@ type ReviewQueries = {
 type GitHubClient = {
   fetchPrHeadSha: typeof fetchPrHeadSha;
   fetchPrDiff: typeof fetchPrDiff;
+  fetchCommitComparison: typeof fetchCommitComparison;
+  fetchCommitRangeDiff: typeof fetchCommitRangeDiff;
+  isCommitOnPullRequest: typeof isCommitOnPullRequest;
   fetchInstructionsFile: typeof fetchInstructionsFile;
   fetchRepositoryFile: typeof fetchRepositoryFile;
   fetchRepositoryTree: typeof fetchRepositoryTree;
@@ -119,6 +137,10 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         const { getLatestReviewCommentId } = await import("@/lib/db/queries");
         return getLatestReviewCommentId(...args);
       },
+      async getLatestCompletedReviewForPr(...args) {
+        const { getLatestCompletedReviewForPr } = await import("@/lib/db/queries");
+        return getLatestCompletedReviewForPr(...args);
+      },
       async countReviewsToday(...args) {
         const { countReviewsToday } = await import("@/lib/db/queries");
         return countReviewsToday(...args);
@@ -143,6 +165,9 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
     github: {
       fetchPrHeadSha,
       fetchPrDiff,
+      fetchCommitComparison,
+      fetchCommitRangeDiff,
+      isCommitOnPullRequest,
       fetchInstructionsFile,
       fetchRepositoryFile,
       fetchRepositoryTree,
@@ -238,6 +263,135 @@ function fetchRepositoryTreeWithinDeadline(
   });
 }
 
+function toCommitComparison(
+  result: CommitComparisonResult,
+  commitInPullRequest: boolean,
+): CommitComparison {
+  if (result.status === "unavailable") {
+    return {
+      status: "diverged",
+      aheadBy: 0,
+      behindBy: 0,
+      truncated: false,
+      baseUnavailable: true,
+      commitInPullRequest: false,
+    };
+  }
+  return {
+    status: result.comparisonStatus,
+    aheadBy: result.aheadBy,
+    behindBy: result.behindBy,
+    truncated: result.truncated,
+    baseUnavailable: false,
+    commitInPullRequest,
+  };
+}
+
+type DiffSelection = {
+  plan: BaselinePlan;
+  rawDiff: string;
+};
+
+/**
+ * Resolve which diff to review. Previous SHAs come only from completed
+ * review rows; comparison uses server-validated SHAs inside the authorized repo.
+ */
+async function selectReviewDiff(
+  job: ReviewJob,
+  dependencies: ReviewWorkerDependencies,
+): Promise<DiffSelection> {
+  const forceFullReview = job.forceFullReview === true;
+
+  if (forceFullReview) {
+    const plan = planReviewBaseline({
+      forceFullReview: true,
+      previousHeadSha: null,
+      currentHeadSha: job.headSha,
+      comparison: null,
+    });
+    const rawDiff = await dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    return { plan, rawDiff };
+  }
+
+  const previous = await dependencies.queries.getLatestCompletedReviewForPr(
+    job.installationId,
+    job.repositoryId,
+    job.prNumber,
+  );
+
+  if (!previous) {
+    const plan = planReviewBaseline({
+      forceFullReview: false,
+      previousHeadSha: null,
+      currentHeadSha: job.headSha,
+      comparison: null,
+    });
+    const rawDiff = await dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    return { plan, rawDiff };
+  }
+
+  const [comparisonResult, commitInPullRequest] = await Promise.all([
+    dependencies.github.fetchCommitComparison(
+      job.installationId,
+      job.repoFullName,
+      previous.headSha,
+      job.headSha,
+    ),
+    dependencies.github.isCommitOnPullRequest(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      previous.headSha,
+    ),
+  ]);
+
+  const plan = planReviewBaseline({
+    forceFullReview: false,
+    previousHeadSha: previous.headSha,
+    currentHeadSha: job.headSha,
+    comparison: toCommitComparison(comparisonResult, commitInPullRequest),
+  });
+
+  if (plan.useIncrementalDiff && plan.comparedFromSha) {
+    const rangeDiff = await dependencies.github.fetchCommitRangeDiff(
+      job.installationId,
+      job.repoFullName,
+      plan.comparedFromSha,
+      job.headSha,
+    );
+    if (rangeDiff !== null) {
+      return { plan, rawDiff: rangeDiff };
+    }
+    // Range fetch failed after a trusted plan — broaden to full PR diff.
+    const fallbackPlan: BaselinePlan = {
+      mode: "fallback_full",
+      comparedFromSha: previous.headSha,
+      useIncrementalDiff: false,
+    };
+    const rawDiff = await dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    return { plan: fallbackPlan, rawDiff };
+  }
+
+  const rawDiff = await dependencies.github.fetchPrDiff(
+    job.installationId,
+    job.repoFullName,
+    job.prNumber,
+  );
+  return { plan, rawDiff };
+}
+
 async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies) {
   const review = await dependencies.queries.getReviewBySha(
     job.installationId,
@@ -272,9 +426,9 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
   const reviewStartedAt = Date.now();
   const llmDeadline = reviewStartedAt + LLM_TIMEOUT_MS;
   try {
-    const [model, rawDiff, instructions] = await Promise.all([
+    const [{ plan, rawDiff }, model, instructions] = await Promise.all([
+      selectReviewDiff(job, dependencies),
       dependencies.queries.getInstallationModel(job.installationId),
-      dependencies.github.fetchPrDiff(job.installationId, job.repoFullName, job.prNumber),
       dependencies.github.fetchInstructionsFile(
         job.installationId,
         job.repoFullName,
@@ -283,6 +437,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     ]);
     if (!model) throw new Error("Installation model configuration is missing.");
 
+    const reviewMode: ReviewMode = plan.mode;
     const processedDiff = processDiff(rawDiff);
     const promptContext = {
       prTitle: job.prTitle,
@@ -399,7 +554,21 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       filesReviewed: processedDiff.files.length,
       skippedFiles: processedDiff.skippedFiles,
       headSha: job.headSha,
+      reviewMode,
+      comparedFromSha: plan.comparedFromSha,
     });
+
+    // Re-check head immediately before publication (debounce resolution).
+    const publishHeadSha = await dependencies.github.fetchPrHeadSha(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    if (publishHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
+      await dependencies.queries.markReviewSkipped(job.installationId, review.id, "stale_sha");
+      return { status: "stale_sha" as const };
+    }
+
     const previousCommentId = review.commentId ?? (await dependencies.queries.getLatestReviewCommentId(
       job.installationId,
       job.repositoryId,
@@ -417,6 +586,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       reviewMarkdown: markdown,
       commentId,
       verdict: gatedReview.verdict,
+      reviewMode,
+      comparedFromSha: plan.comparedFromSha,
       ...severityCounts(gatedReview),
       candidateFindings: generatedCandidates.length,
       rejectedFindings,
@@ -431,6 +602,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     });
     return {
       status: "completed" as const,
+      reviewMode,
+      comparedFromSha: plan.comparedFromSha,
       context: {
         fullFile: fullFileContext.metadata,
         relatedCode: relatedCodeContext.metadata,

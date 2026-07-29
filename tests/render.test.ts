@@ -85,7 +85,7 @@ describe("review renderer", () => {
       </details>
 
       ---
-      🛡️ DiffGuard · reviewed commit \`abcdef1\`"
+      🛡️ DiffGuard · reviewed commit \`abcdef1\` · full review"
     `);
   });
 
@@ -113,5 +113,32 @@ describe("review renderer", () => {
     expect(output).not.toContain("## Security findings");
     expect(output).not.toContain("## Other findings");
     expect(output).not.toContain("<details>");
+  });
+
+  it("discloses incremental and fallback modes in the footer", () => {
+    const previous = "0123456789abcdef0123456789abcdef01234567";
+    const incremental = renderReview(
+      { summary: "New range only.", verdict: "comment", findings: [] },
+      {
+        ...metadata,
+        reviewMode: "incremental",
+        comparedFromSha: previous,
+      },
+    );
+    const fallback = renderReview(
+      { summary: "History rewritten.", verdict: "comment", findings: [] },
+      {
+        ...metadata,
+        reviewMode: "fallback_full",
+        comparedFromSha: previous,
+      },
+    );
+
+    expect(incremental).toContain(
+      "🛡️ DiffGuard · reviewed commit `abcdef1` · incremental `0123456`…`abcdef1`",
+    );
+    expect(fallback).toContain(
+      "🛡️ DiffGuard · reviewed commit `abcdef1` · full review (fallback)",
+    );
   });
 });

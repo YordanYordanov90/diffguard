@@ -11,6 +11,7 @@ unused webhook fields.
 ReviewStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 SkipReason   = "draft" | "bot_author" | "skip_keyword" | "daily_cap"
              | "rate_limited" | "stale_sha"
+ReviewMode   = "full" | "incremental" | "fallback_full"
 Severity     = "critical" | "high" | "medium" | "low" | "info"
 Category     = "security" | "bug" | "quality" | "performance"
 Verdict      = "approve" | "comment" | "concerns"
@@ -53,6 +54,8 @@ head_sha         text NOT NULL        // 40-char SHA
 status           ReviewStatus NOT NULL DEFAULT 'queued'
 skip_reason      SkipReason NULL
 verdict          Verdict NULL
+review_mode      ReviewMode NOT NULL DEFAULT 'full'
+compared_from_sha text NULL            // prior completed head for incremental
 review_markdown  text NULL            // rendered comment body (never the diff)
 comment_id       bigint NULL          // GitHub comment id for edit-in-place
 findings_critical integer NOT NULL DEFAULT 0
@@ -77,6 +80,9 @@ updated_at       timestamptz NOT NULL DEFAULT now()
 UNIQUE (repository_id, pr_number, head_sha)   // idempotency key
 INDEX  (installation_id, created_at)          // dashboard + daily cap
 ```
+
+`compared_from_sha`, like `head_sha`, is a 40-character hexadecimal SHA when
+set. Review mode does not change the idempotency key.
 
 Usage/caps are derived: `count(reviews) where installation_id = X and
 created_at >= start_of_day and status != 'skipped'`.
@@ -307,7 +313,6 @@ Zod/Drizzle code in the same increment.
 ### Planned enums
 
 ```ts
-ReviewMode       = "full" | "incremental" | "fallback_full"
 FindingLifecycle  = "open" | "resolved" | "dismissed"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
@@ -315,17 +320,21 @@ IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-### Planned reviews additions (Features 27 and 29)
+### Planned reviews additions (Feature 29)
 
 ```ts
-review_mode              ReviewMode NOT NULL DEFAULT "full"
-compared_from_sha        text NULL       // prior completed head for incremental
 linked_issue_assessments jsonb NOT NULL DEFAULT "[]"
 ```
 
-`compared_from_sha`, like `head_sha`, is a 40-character hexadecimal SHA.
 The JSON column is validated as `IssueAssessment[]` before every write and
 after every read.
+
+### Review job (QStash — Feature 27 addition)
+
+```ts
+// existing fields plus:
+forceFullReview?: boolean  // internal override for Feature 34; default false
+```
 
 ### review_findings (Feature 25)
 

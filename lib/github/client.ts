@@ -33,6 +33,16 @@ export type RepositoryTreeResult =
   | { status: "fetched"; paths: string[] }
   | { status: "unavailable" | "truncated" };
 
+export type CommitComparisonResult =
+  | {
+      status: "compared";
+      comparisonStatus: "ahead" | "behind" | "diverged" | "identical";
+      aheadBy: number;
+      behindBy: number;
+      truncated: boolean;
+    }
+  | { status: "unavailable" };
+
 const fileResponseSchema = z.object({
   type: z.literal("file"),
   encoding: z.literal("base64"),
@@ -54,6 +64,21 @@ const repositoryTreeResponseSchema = z.object({
     }),
   ).max(20_000),
 });
+
+const commitComparisonSchema = z.object({
+  status: z.enum(["ahead", "behind", "diverged", "identical"]),
+  ahead_by: z.number().int().nonnegative(),
+  behind_by: z.number().int().nonnegative(),
+  total_commits: z.number().int().nonnegative(),
+  commits: z.array(z.unknown()).max(300),
+  files: z.array(z.unknown()).max(400).optional(),
+});
+
+const commitPullsSchema = z.array(
+  z.object({
+    number: z.number().int().positive(),
+  }),
+);
 
 const repositoryShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
 
@@ -189,6 +214,114 @@ export function createGitHubClient(
       );
 
       return pullResponseSchema.parse(response.data).head.sha;
+    },
+
+    /**
+     * Compare two server-validated SHAs within the authorized repository.
+     * Does not return file contents or diffs — only ancestry metadata.
+     */
+    async fetchCommitComparison(
+      installationId: number,
+      repoFullName: string,
+      baseSha: string,
+      headSha: string,
+    ): Promise<CommitComparisonResult> {
+      repositoryShaSchema.parse(baseSha);
+      repositoryShaSchema.parse(headSha);
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/compare/{basehead}",
+          {
+            owner,
+            repo,
+            basehead: `${baseSha}...${headSha}`,
+          },
+        );
+        const parsed = commitComparisonSchema.safeParse(response.data);
+        if (!parsed.success) return { status: "unavailable" };
+        const truncated =
+          parsed.data.commits.length < parsed.data.total_commits ||
+          (parsed.data.files !== undefined &&
+            parsed.data.files.length >= 300 &&
+            parsed.data.total_commits > 0);
+        return {
+          status: "compared",
+          comparisonStatus: parsed.data.status,
+          aheadBy: parsed.data.ahead_by,
+          behindBy: parsed.data.behind_by,
+          truncated,
+        };
+      } catch (error) {
+        if (isNotFound(error)) return { status: "unavailable" };
+        throw error;
+      }
+    },
+
+    /**
+     * Unified diff for the exclusive range base…head. Null when the base
+     * commit is missing so callers can fall back to the full PR diff.
+     */
+    async fetchCommitRangeDiff(
+      installationId: number,
+      repoFullName: string,
+      baseSha: string,
+      headSha: string,
+    ): Promise<string | null> {
+      repositoryShaSchema.parse(baseSha);
+      repositoryShaSchema.parse(headSha);
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/compare/{basehead}",
+          {
+            owner,
+            repo,
+            basehead: `${baseSha}...${headSha}`,
+            headers: { accept: "application/vnd.github.v3.diff" },
+          },
+        );
+        if (typeof response.data !== "string") {
+          throw new Error("GitHub returned an unexpected commit-range diff.");
+        }
+        return response.data;
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+
+    /**
+     * Confirm a commit is associated with the given PR number via GitHub.
+     * Uses the commits-list-pulls endpoint; failures are non-throwing false.
+     */
+    async isCommitOnPullRequest(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      commitSha: string,
+    ): Promise<boolean> {
+      repositoryShaSchema.parse(commitSha);
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls",
+          {
+            owner,
+            repo,
+            commit_sha: commitSha,
+          },
+        );
+        const pulls = commitPullsSchema.safeParse(response.data);
+        if (!pulls.success) return false;
+        return pulls.data.some((pull) => pull.number === prNumber);
+      } catch (error) {
+        if (isNotFound(error)) return false;
+        throw error;
+      }
     },
 
     async fetchInstructionsFile(
@@ -363,6 +496,15 @@ export const githubClient = {
     getDefaultClient().fetchPrDiff(...args),
   fetchPrHeadSha: (...args: Parameters<GitHubClient["fetchPrHeadSha"]>) =>
     getDefaultClient().fetchPrHeadSha(...args),
+  fetchCommitComparison: (
+    ...args: Parameters<GitHubClient["fetchCommitComparison"]>
+  ) => getDefaultClient().fetchCommitComparison(...args),
+  fetchCommitRangeDiff: (
+    ...args: Parameters<GitHubClient["fetchCommitRangeDiff"]>
+  ) => getDefaultClient().fetchCommitRangeDiff(...args),
+  isCommitOnPullRequest: (
+    ...args: Parameters<GitHubClient["isCommitOnPullRequest"]>
+  ) => getDefaultClient().isCommitOnPullRequest(...args),
   fetchInstructionsFile: (
     ...args: Parameters<GitHubClient["fetchInstructionsFile"]>
   ) => getDefaultClient().fetchInstructionsFile(...args),
@@ -382,6 +524,9 @@ export const githubClient = {
 export const {
   fetchPrDiff,
   fetchPrHeadSha,
+  fetchCommitComparison,
+  fetchCommitRangeDiff,
+  isCommitOnPullRequest,
   fetchInstructionsFile,
   fetchRepositoryFile,
   fetchRepositoryTree,
