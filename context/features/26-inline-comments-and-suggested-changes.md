@@ -33,7 +33,8 @@ precise replacement.
   suggestion for findings that cannot produce an apply-ready edit.
 - Render a GitHub suggestion block only when its path and complete range are
   inside one changed hunk, the original lines match the current head, and the
-  replacement stays within size and line-count limits.
+  replacement stays within size and line-count limits. The range must include
+  the confirmed finding line.
 - Never submit `APPROVE` or `REQUEST_CHANGES`; merge gating remains a later
   product decision.
 - Persist returned review-comment ids on the matching Feature 25 finding rows.
@@ -50,6 +51,10 @@ precise replacement.
   summary without an inline comment.
 - If GitHub rejects a batch, retry once without invalid inline entries. The
   summary review must still complete successfully.
+- Recheck the PR head immediately before inline publication. Once Feature 27
+  incremental baselines are enabled, a stale result skips all publication so a
+  stale summary cannot be posted. Once GitHub accepts a review POST, retry only
+  comment retrieval and never post a second review for that accepted request.
 - Secondary rate limiting or inline publishing failure is recorded safely and
   must not duplicate the summary or mark valid LLM output as malformed.
 

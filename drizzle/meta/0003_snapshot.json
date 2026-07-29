@@ -1,6 +1,6 @@
 {
-  "id": "9c489feb-1a49-440d-a6b7-dec720cc66b7",
-  "prevId": "c98ffe34-e7ed-427f-85a3-de27f7dc855c",
+  "id": "092873cd-3aec-4df0-aea0-dcf18febff48",
+  "prevId": "9c489feb-1a49-440d-a6b7-dec720cc66b7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -465,6 +465,20 @@
           "primaryKey": false,
           "notNull": false
         },
+        "review_mode": {
+          "name": "review_mode",
+          "type": "review_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'full'"
+        },
+        "compared_from_sha": {
+          "name": "compared_from_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "review_markdown": {
           "name": "review_markdown",
           "type": "text",
@@ -692,6 +706,15 @@
         "open",
         "resolved",
         "dismissed"
+      ]
+    },
+    "public.review_mode": {
+      "name": "review_mode",
+      "schema": "public",
+      "values": [
+        "full",
+        "incremental",
+        "fallback_full"
       ]
     },
     "public.review_status": {

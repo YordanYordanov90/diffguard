@@ -3,6 +3,7 @@ import { normalizeRepositoryPath } from "@/lib/repository/path";
 import type { DiffFile } from "./diff";
 import type {
   AdjudicationOutput,
+  ConfirmedFinding,
   Finding,
   FindingCandidate,
 } from "./schema";
@@ -20,6 +21,8 @@ export type EvidenceDecision = {
     verdict: AdjudicationOutput["verdict"];
     findings: Finding[];
   };
+  /** Confirmed candidates with evidence fields for Feature 25 persistence. */
+  confirmedFindings: ConfirmedFinding[];
   rejectedCount: number;
   manualCount: number;
 };
@@ -102,7 +105,12 @@ export function getRelevantDiffHunks(
   );
 }
 
-function toFinding(candidate: AllowlistedCandidate): Finding {
+function toFinding(
+  candidate: Pick<
+    FindingCandidate,
+    "severity" | "category" | "file" | "line" | "title" | "detail" | "suggestion"
+  >,
+): Finding {
   return {
     severity: candidate.severity,
     category: candidate.category,
@@ -111,6 +119,24 @@ function toFinding(candidate: AllowlistedCandidate): Finding {
     title: candidate.title,
     detail: candidate.detail,
     suggestion: candidate.suggestion,
+  };
+}
+
+function toConfirmedFinding(candidate: AllowlistedCandidate): ConfirmedFinding {
+  return {
+    severity: candidate.severity,
+    category: candidate.category,
+    file: candidate.file,
+    line: candidate.line,
+    title: candidate.title,
+    detail: candidate.detail,
+    suggestion: candidate.suggestion,
+    confidence: candidate.confidence,
+    observedBehavior: candidate.observedBehavior,
+    causalPath: candidate.causalPath,
+    violatedInvariant: candidate.violatedInvariant,
+    requiresRuntimeVerification: false,
+    suggestedChange: candidate.suggestedChange,
   };
 }
 
@@ -132,7 +158,7 @@ export function applyAdjudication(
     decisions.set(decision.candidateId, decision);
   }
 
-  const confirmed: Finding[] = [];
+  const confirmedFindings: ConfirmedFinding[] = [];
   let rejectedCount = initiallyRejectedCount;
   let manualCount = 0;
   for (const candidate of candidates) {
@@ -142,20 +168,21 @@ export function applyAdjudication(
     } else if (decision.decision === "manual_verification") {
       manualCount += 1;
     } else {
-      confirmed.push(toFinding(candidate));
+      confirmedFindings.push(toConfirmedFinding(candidate));
     }
   }
 
-  const review = confirmed.length === 0
+  const review = confirmedFindings.length === 0
     ? emptyGatedReview()
     : {
         summary: adjudication.summary,
         verdict: adjudication.verdict,
-        findings: confirmed,
+        findings: confirmedFindings.map(toFinding),
       };
 
   return {
     review,
+    confirmedFindings,
     rejectedCount,
     manualCount,
   };
@@ -166,5 +193,14 @@ export function emptyGatedReview(): EvidenceDecision["review"] {
     summary: "No actionable findings were confirmed.",
     verdict: "approve",
     findings: [],
+  };
+}
+
+export function emptyEvidenceDecision(): EvidenceDecision {
+  return {
+    review: emptyGatedReview(),
+    confirmedFindings: [],
+    rejectedCount: 0,
+    manualCount: 0,
   };
 }

@@ -6,9 +6,10 @@ Update this file after every meaningful implementation change.
 
 - Phase 1 core pipeline and dashboard foundation are complete.
 - Dashboard operations expansion (Features 18–21) is implemented.
-- Review-quality expansion is specified as Features 22–34; Feature 22
-  implementation is complete, Feature 23 is underway, Feature 24 is
-  implemented, and Feature 22 final acceptance verification is pending.
+- Review-quality expansion is specified as Features 22–34; Features 22 and 24
+  are implemented with acceptance verification still pending, Feature 23 is
+  underway, and Features 25–26 (finding records and inline comments) are
+  implemented.
 
 ## Current Goal
 
@@ -236,6 +237,40 @@ Update this file after every meaningful implementation change.
   before publication. Pure baseline tests and worker fixtures cover first
   review, descendant pushes, force-push fallback, deleted bases, truncated
   compare, and post-generation stale head.
+- Feature 25 (Finding Records & Stable Fingerprints) — implementation
+  completed 2026-07-29: `review_findings` table and lifecycle/confidence/
+  severity/category enums, trusted pure-code SHA-256 fingerprints, confirmed-
+  only upsert wiring in the worker, tenant-scoped query helpers (upsert,
+  list-by-review, list-open-by-PR, attach comment id, terminal status), and
+  invalid-line degradation to file-level findings. Historical reviews without
+  finding rows remain readable. Migration `0002_review_findings.sql` generated
+  and applied to Neon. Automated fingerprint, evidence, worker, lint, test,
+  and production-build checks pass.
+- PR #56 Codex feedback fixes — implementation completed 2026-07-29:
+  summary comment IDs are saved before durable-finding writes, ensuring retries
+  edit the existing summary after a persistence failure; confirmed finding
+  batches now use Neon HTTP's atomic transaction batch so partial rows cannot
+  survive a failed review.
+- Feature 26 (Inline Comments & Suggested Changes) — implementation completed
+  2026-07-29: pure eligibility/cap/ordering, hunk-scoped suggestion validation,
+  GitHub `COMMENT` review client using `line`/`side` (not `position`), worker
+  wiring that persists Feature 25 findings before posting inline comments so
+  returned review-comment ids can attach, soft degradation when inline publish
+  or id attachment fails, and summary disclosure for inline vs summary-only
+  findings. Pipeline order is now findings → inline → summary → complete so
+  inline ids can bind to durable rows. Automated inline, GitHub client, worker,
+  lint, test, and production-build checks pass.
+- PR #57 Codex feedback fixes — implementation completed 2026-07-29:
+  the worker rechecks the PR head immediately before inline publication;
+  accepted review posts retry only comment-ID retrieval, never the POST; and a
+  suggested-change range must contain the confirmed finding line.
+- PR #57 DiffGuard low-risk feedback — implementation completed 2026-07-29:
+  published comment-ID matching also requires the deterministic rendered body,
+  so same-coordinate inline findings cannot attach to each other's comment.
+- Dev/main merge resolution — completed 2026-07-29: durable findings retain
+  migration `0002_review_findings`; the incremental baseline was regenerated as
+  migration `0003_curly_punisher`. A stale head now skips all publication so a
+  superseded incremental review cannot post either inline or summary comments.
 
 ## In Progress
 
@@ -253,8 +288,7 @@ Update this file after every meaningful implementation change.
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
-2. Implement the review-quality roadmap in dependency order:
-   - Features 25–26: durable findings, inline comments, suggested changes;
+2. Continue the review-quality roadmap in dependency order:
    - Feature 28: finding reconciliation on top of incremental baselines;
    - Feature 29: linked GitHub Issue validation;
    - Features 30–32: feedback signals and governed repository learnings;

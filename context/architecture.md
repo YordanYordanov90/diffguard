@@ -98,6 +98,22 @@
   summary footer. An internal `forceFullReview` job flag (Feature 34) forces
   full mode. Stale-head is checked at claim time and again immediately
   before publication.
+- Feature 25 persists one durable finding row per repository, PR, and trusted
+  fingerprint for confirmed candidates only. Fingerprints are computed in pure
+  code from normalized semantics plus a one-way evidence anchor; retries upsert
+  without duplicating rows or overwriting existing GitHub comment ids.
+  Dismissed findings never silently reopen. Diffs, prompts, and source content
+  remain non-persisted.
+- Feature 26 posts at most eight high-confidence inline review comments in one
+  GitHub `COMMENT` review (never APPROVE/REQUEST_CHANGES) using `line`/`side`
+  coordinates on a head SHA rechecked immediately before publication.
+  Suggested-change blocks are included only when the replacement range is
+  fully contained in one reviewed hunk and contains the confirmed finding line.
+  Non-stale inline failure degrades to summary-only; the edit-in-place summary
+  remains canonical. A stale head skips all publication under Feature 27's
+  pre-publication guard. After GitHub accepts the review POST, comment-ID
+  retrieval retries only its safe GET and never posts a duplicate review.
+  Returned review-comment ids attach to Feature 25 finding rows once.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

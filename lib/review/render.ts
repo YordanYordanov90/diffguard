@@ -7,6 +7,9 @@ export type RenderMetadata = {
   headSha: string;
   reviewMode?: ReviewMode;
   comparedFromSha?: string | null;
+  /** When set and > 0, disclose that some findings have no inline comment. */
+  summaryOnlyFindingCount?: number;
+  inlineCommentCount?: number;
 };
 
 const severityRank: Record<Severity, number> = {
@@ -107,6 +110,20 @@ export function renderReview(review: ReviewOutput, metadata: RenderMetadata): st
       "",
       "</details>",
     );
+  }
+
+  const inlineCount = metadata.inlineCommentCount ?? 0;
+  const summaryOnly = metadata.summaryOnlyFindingCount ?? 0;
+  if (review.findings.length > 0 && (inlineCount > 0 || summaryOnly > 0)) {
+    let disclosure: string;
+    if (inlineCount > 0 && summaryOnly > 0) {
+      disclosure = `_${inlineCount} finding${inlineCount === 1 ? "" : "s"} also posted as inline comment${inlineCount === 1 ? "" : "s"}; ${summaryOnly} remain summary-only (high-confidence critical/high first, max 8 inline)._`;
+    } else if (inlineCount > 0) {
+      disclosure = `_${inlineCount} finding${inlineCount === 1 ? "" : "s"} also posted as inline comment${inlineCount === 1 ? "" : "s"}._`;
+    } else {
+      disclosure = `_${summaryOnly} finding${summaryOnly === 1 ? "" : "s"} remain summary-only (inline comments require a mapped high-confidence critical/high/medium line, max 8)._`;
+    }
+    sections.push("", disclosure);
   }
 
   const skippedFiles = renderSkippedFiles(metadata.skippedFiles);

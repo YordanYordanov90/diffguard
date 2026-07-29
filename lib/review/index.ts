@@ -8,3 +8,5 @@ export * from "./prompt";
 export * from "./render";
 export * from "./generate";
 export * from "./evidence";
+export * from "./fingerprint";
+export * from "./inline";

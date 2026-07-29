@@ -25,6 +25,8 @@ export const findingDecisionSchema = z.enum([
   "manual_verification",
 ]);
 
+export const findingLifecycleSchema = z.enum(["open", "resolved", "dismissed"]);
+
 export const findingSchema = z.object({
   severity: severitySchema,
   category: categorySchema,
@@ -74,6 +76,13 @@ export const adjudicationOutputSchema = z.object({
   decisions: z.array(findingAdjudicationSchema).max(50),
 });
 
+/** Confirmed finding with evidence fields after Feature 24 adjudication. */
+export const confirmedFindingSchema = findingCandidateSchema.extend({
+  requiresRuntimeVerification: z.literal(false),
+});
+
+export const persistedSuggestedChangeSchema = suggestedChangeSchema.nullable();
+
 export type Severity = z.infer<typeof severitySchema>;
 export type Category = z.infer<typeof categorySchema>;
 export type Verdict = z.infer<typeof verdictSchema>;
@@ -81,8 +90,10 @@ export type Finding = z.infer<typeof findingSchema>;
 export type ReviewOutput = z.infer<typeof reviewOutputSchema>;
 export type FindingConfidence = z.infer<typeof findingConfidenceSchema>;
 export type FindingDecision = z.infer<typeof findingDecisionSchema>;
+export type FindingLifecycle = z.infer<typeof findingLifecycleSchema>;
 export type SuggestedChange = z.infer<typeof suggestedChangeSchema>;
 export type FindingCandidate = z.infer<typeof findingCandidateSchema>;
+export type ConfirmedFinding = z.infer<typeof confirmedFindingSchema>;
 export type CandidateReviewOutput = z.infer<typeof candidateReviewOutputSchema>;
 export type FindingAdjudication = z.infer<typeof findingAdjudicationSchema>;
 export type AdjudicationOutput = z.infer<typeof adjudicationOutputSchema>;
