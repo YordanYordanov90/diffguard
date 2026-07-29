@@ -38,7 +38,7 @@ function changedLines(patch: string): Set<number> {
       continue;
     }
     if (!inHunk || line.startsWith("\\")) continue;
-    if (line.startsWith("+") && !line.startsWith("+++")) {
+    if (line.startsWith("+")) {
       result.add(currentLine);
       currentLine += 1;
     } else if (line.startsWith(" ")) {
@@ -146,12 +146,16 @@ export function applyAdjudication(
     }
   }
 
+  const review = confirmed.length === 0
+    ? emptyGatedReview()
+    : {
+        summary: adjudication.summary,
+        verdict: adjudication.verdict,
+        findings: confirmed,
+      };
+
   return {
-    review: {
-      summary: adjudication.summary,
-      verdict: adjudication.verdict,
-      findings: confirmed,
-    },
+    review,
     rejectedCount,
     manualCount,
   };

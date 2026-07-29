@@ -47,6 +47,23 @@ describe("finding evidence gate", () => {
     expect(result.rejectedCount).toBe(3);
   });
 
+  it("maps added source lines that begin with increment operators", () => {
+    const incrementPatch = `diff --git a/src/counter.ts b/src/counter.ts
+@@ -1,2 +1,2 @@
+ const before = true;
+-counter += 1;
++++counter;
+`;
+
+    const result = prepareCandidates(
+      [candidate({ file: "src/counter.ts", line: 2 })],
+      [{ path: "src/counter.ts", patch: incrementPatch }],
+    );
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.rejectedCount).toBe(0);
+  });
+
   it("publishes only confirmed allowlisted candidates", () => {
     const prepared = prepareCandidates([candidate(), candidate({ line: null })], [
       { path: "src/row.tsx", patch },
@@ -81,6 +98,30 @@ describe("finding evidence gate", () => {
     });
 
     expect(result.review.findings).toHaveLength(0);
+    expect(result.review.summary).toBe("No actionable findings were confirmed.");
+    expect(result.review.verdict).toBe("approve");
     expect(result.rejectedCount).toBe(2);
+  });
+
+  it("does not publish adjudicator summary or verdict when all candidates are manual", () => {
+    const prepared = prepareCandidates([candidate()], [
+      { path: "src/row.tsx", patch },
+    ]);
+    const result = applyAdjudication(prepared.candidates, {
+      summary: "The rejected candidate is a concern.",
+      verdict: "concerns",
+      decisions: [{
+        candidateId: "candidate-1",
+        decision: "manual_verification",
+        reason: "Needs runtime verification.",
+      }],
+    });
+
+    expect(result.review).toEqual({
+      summary: "No actionable findings were confirmed.",
+      verdict: "approve",
+      findings: [],
+    });
+    expect(result.manualCount).toBe(1);
   });
 });
