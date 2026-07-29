@@ -39,6 +39,7 @@ function createDependencies(
       saveReviewCommentId: vi.fn().mockResolvedValue({ id: "review-1" }),
       markReviewFailed: vi.fn().mockResolvedValue({ id: "review-1" }),
       upsertConfirmedFindings: vi.fn().mockResolvedValue([]),
+      attachFindingGitHubCommentId: vi.fn().mockResolvedValue(null),
       ...overrides,
     },
     github: {
@@ -48,6 +49,7 @@ function createDependencies(
       fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
       fetchRepositoryTree: vi.fn().mockResolvedValue({ status: "fetched", paths: [] }),
       upsertComment: vi.fn().mockResolvedValue(9001),
+      createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 1, comments: [] }),
       ...githubOverrides,
     },
     generateReview: vi.fn().mockResolvedValue({
@@ -158,7 +160,7 @@ describe("review worker route", () => {
     );
   });
 
-  it("persists the summary comment before a finding write failure", async () => {
+  it("fails before summary when confirmed findings cannot be persisted", async () => {
     const dependencies = createDependencies({
       upsertConfirmedFindings: vi.fn().mockRejectedValue(new Error("Database unavailable.")),
     }, {
@@ -206,20 +208,108 @@ describe("review worker route", () => {
     const response = await handleReviewWorker(request(), dependencies);
 
     expect(response.status).toBe(500);
-    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledWith(
-      42,
-      "review-1",
-      9001,
-    );
-    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledBefore(
-      dependencies.queries.upsertConfirmedFindings,
-    );
+    // Feature 26 persists findings before inline/summary so comment ids can attach.
+    expect(dependencies.queries.upsertConfirmedFindings).toHaveBeenCalled();
+    expect(dependencies.github.upsertComment).not.toHaveBeenCalled();
+    expect(dependencies.queries.saveReviewCommentId).not.toHaveBeenCalled();
     expect(dependencies.queries.markReviewFailed).toHaveBeenCalledWith(
       42,
       "review-1",
       "Review processing failed.",
     );
     expect(dependencies.queries.markReviewCompleted).not.toHaveBeenCalled();
+  });
+
+  it("still posts the summary after inline comment attachment fails", async () => {
+    const dependencies = createDependencies(
+      {
+        upsertConfirmedFindings: vi.fn().mockResolvedValue([
+          {
+            id: "finding-1",
+            fingerprint: "fp-1",
+            githubCommentId: null,
+            confidence: "high",
+            severity: "high",
+            category: "bug",
+            file: "src/row.tsx",
+            line: 1,
+            title: "Confirmed changed behavior",
+            detail: "Detail",
+            suggestion: null,
+            suggestedChange: null,
+          },
+        ]),
+        attachFindingGitHubCommentId: vi.fn().mockRejectedValue(
+          new Error("Database unavailable."),
+        ),
+      },
+      {
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+        ),
+        createPullRequestReview: vi.fn().mockResolvedValue({
+          reviewId: 55,
+          comments: [
+            {
+              id: 8801,
+              path: "src/row.tsx",
+              line: 1,
+              startLine: null,
+              body: "inline",
+            },
+          ],
+        }),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [{
+          severity: "high",
+          category: "bug",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Confirmed changed behavior",
+          detail: "Detail",
+          suggestion: null,
+          confidence: "high",
+          observedBehavior: "Observed",
+          causalPath: "Path",
+          violatedInvariant: "Invariant",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 2, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Confirmed",
+        verdict: "concerns",
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "confirmed",
+          reason: "ok",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.createPullRequestReview).toHaveBeenCalled();
+    expect(dependencies.github.upsertComment).toHaveBeenCalled();
+    expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      9001,
+    );
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalled();
+    expect(dependencies.queries.markReviewFailed).not.toHaveBeenCalled();
   });
 
   it("gates candidates before rendering and persists aggregate adjudication telemetry", async () => {
@@ -312,6 +402,185 @@ describe("review worker route", () => {
         fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     ]);
+  });
+
+  it("posts a COMMENT review for confirmed high-confidence findings and attaches comment ids", async () => {
+    const dependencies = createDependencies(
+      {
+        upsertConfirmedFindings: vi.fn().mockResolvedValue([
+          {
+            id: "finding-1",
+            fingerprint: "fp-1",
+            githubCommentId: null,
+            confidence: "high",
+            severity: "high",
+            category: "security",
+            file: "src/row.tsx",
+            line: 1,
+            title: "Confirmed changed behavior",
+            detail: "The changed behavior breaks the invariant.",
+            suggestion: "Use a safe value.",
+            suggestedChange: null,
+          },
+        ]),
+      },
+      {
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+        ),
+        createPullRequestReview: vi.fn().mockResolvedValue({
+          reviewId: 55,
+          comments: [
+            {
+              id: 8801,
+              path: "src/row.tsx",
+              line: 1,
+              startLine: null,
+              body: "inline",
+            },
+          ],
+        }),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [{
+          severity: "high",
+          category: "security",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Confirmed changed behavior",
+          detail: "The changed behavior breaks the invariant.",
+          suggestion: "Use a safe value.",
+          confidence: "high",
+          observedBehavior: "The new branch returns an unsafe value.",
+          causalPath: "The changed return is consumed by the caller.",
+          violatedInvariant: "The caller must receive a safe value.",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 4, outputTokens: 2 },
+      durationMs: 3,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Confirmed.",
+        verdict: "concerns",
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "confirmed",
+          reason: "Concrete path.",
+        }],
+      },
+      usage: { inputTokens: 2, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.createPullRequestReview).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      headSha,
+      [
+        expect.objectContaining({
+          path: "src/row.tsx",
+          line: 1,
+          side: "RIGHT",
+          body: expect.stringContaining("Confirmed changed behavior"),
+        }),
+      ],
+    );
+    expect(dependencies.queries.attachFindingGitHubCommentId).toHaveBeenCalledWith(
+      42,
+      "finding-1",
+      8801,
+    );
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        reviewMarkdown: expect.stringContaining("posted as inline comment"),
+      }),
+    );
+  });
+
+  it("keeps the summary successful when inline review publishing fails", async () => {
+    const dependencies = createDependencies(
+      {
+        upsertConfirmedFindings: vi.fn().mockResolvedValue([
+          {
+            id: "finding-1",
+            fingerprint: "fp-1",
+            githubCommentId: null,
+            confidence: "high",
+            severity: "high",
+            category: "bug",
+            file: "src/row.tsx",
+            line: 1,
+            title: "Inline candidate",
+            detail: "Detail",
+            suggestion: null,
+            suggestedChange: null,
+          },
+        ]),
+      },
+      {
+        fetchPrDiff: vi.fn().mockResolvedValue(
+          `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+        ),
+        createPullRequestReview: vi.fn().mockRejectedValue(new Error("rate limited")),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [{
+          severity: "high",
+          category: "bug",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Inline candidate",
+          detail: "Detail",
+          suggestion: null,
+          confidence: "high",
+          observedBehavior: "Observed",
+          causalPath: "Path",
+          violatedInvariant: "Invariant",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Confirmed.",
+        verdict: "concerns",
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "confirmed",
+          reason: "ok",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.createPullRequestReview).toHaveBeenCalledTimes(2);
+    expect(dependencies.queries.attachFindingGitHubCommentId).not.toHaveBeenCalled();
+    expect(dependencies.github.upsertComment).toHaveBeenCalled();
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalled();
   });
 
   it("does not persist rejected or manual-verification candidates as finding rows", async () => {

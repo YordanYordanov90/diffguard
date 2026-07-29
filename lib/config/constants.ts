@@ -16,4 +16,7 @@ export const REVIEW_PROMPT_TOKEN_BUDGET =
 export const LLM_TIMEOUT_MS = 120_000;
 export const REVIEW_OUTPUT_TOKEN_BUDGET = 8_000;
 export const ADJUDICATION_OUTPUT_TOKEN_BUDGET = 4_000;
+export const INLINE_COMMENT_CAP = 8;
+export const INLINE_SUGGESTION_MAX_LINES = 20;
+export const INLINE_SUGGESTION_MAX_CHARS = 4_000;
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

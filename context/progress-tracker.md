@@ -8,7 +8,8 @@ Update this file after every meaningful implementation change.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Features 22 and 24
   are implemented with acceptance verification still pending, Feature 23 is
-  underway, and Feature 25 (finding records & fingerprints) is implemented.
+  underway, and Features 25–26 (finding records and inline comments) are
+  implemented.
 
 ## Current Goal
 
@@ -237,6 +238,15 @@ Update this file after every meaningful implementation change.
   edit the existing summary after a persistence failure; confirmed finding
   batches now use Neon HTTP's atomic transaction batch so partial rows cannot
   survive a failed review.
+- Feature 26 (Inline Comments & Suggested Changes) — implementation completed
+  2026-07-29: pure eligibility/cap/ordering, hunk-scoped suggestion validation,
+  GitHub `COMMENT` review client using `line`/`side` (not `position`), worker
+  wiring that persists Feature 25 findings before posting inline comments so
+  returned review-comment ids can attach, soft degradation when inline publish
+  or id attachment fails, and summary disclosure for inline vs summary-only
+  findings. Pipeline order is now findings → inline → summary → complete so
+  inline ids can bind to durable rows. Automated inline, GitHub client, worker,
+  lint, test, and production-build checks pass.
 
 ## In Progress
 
@@ -257,7 +267,6 @@ Update this file after every meaningful implementation change.
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
 2. Continue the review-quality roadmap in dependency order:
-   - Feature 26: inline comments and suggested changes;
    - Features 27–28: incremental review and finding reconciliation;
    - Feature 29: linked GitHub Issue validation;
    - Features 30–32: feedback signals and governed repository learnings;

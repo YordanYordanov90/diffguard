@@ -95,6 +95,12 @@
   without duplicating rows or overwriting existing GitHub comment ids.
   Dismissed findings never silently reopen. Diffs, prompts, and source content
   remain non-persisted.
+- Feature 26 posts at most eight high-confidence inline review comments in one
+  GitHub `COMMENT` review (never APPROVE/REQUEST_CHANGES) using `line`/`side`
+  coordinates on the exact head SHA. Suggested-change blocks are included only
+  when the replacement range is fully contained in one reviewed hunk. Inline
+  failure degrades to summary-only; the edit-in-place summary remains canonical.
+  Returned review-comment ids attach to Feature 25 finding rows once.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

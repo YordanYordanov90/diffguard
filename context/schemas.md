@@ -123,8 +123,38 @@ candidates become rows. Fingerprints are computed in trusted pure code from
 normalized category/file/line/violated-invariant plus a one-way hash of
 normalized observed-behavior and causal-path. Invalid line locations degrade
 to file-level findings before persistence. `suggested_change` is revalidated
-at the write boundary. Upserts never overwrite an existing
+at the write boundary and again against the reviewed patch before any GitHub
+suggestion block is rendered (Feature 26). Upserts never overwrite an existing
 `github_comment_id` and never silently reopen `dismissed` findings.
+
+### Inline review comments (Feature 26 — runtime, not a table)
+
+```ts
+PullRequestReviewCommentInput = {
+  path: string
+  body: string
+  line: number              // RIGHT-side new-file line; never `position`
+  side: "RIGHT" | "LEFT"
+  startLine?: number        // multi-line comments / suggestion ranges
+  startSide?: "RIGHT" | "LEFT"
+}
+
+CreatePullRequestReviewResult = {
+  reviewId: number
+  comments: {
+    id: number
+    path: string
+    line: number | null
+    startLine: number | null
+    body: string
+  }[]
+}
+```
+
+Eligibility (pure): confidence `high`; severity critical/high, or medium under
+the remaining cap; mapped added line; max 8 ordered by security → severity →
+file risk. `event` is always `COMMENT`. Suggestion blocks require a validated
+`SuggestedChange` fully inside one hunk.
 
 ## GitHub App OAuth Contracts (Zod — `lib/auth/github-app.ts`)
 
@@ -349,11 +379,11 @@ never persisted.
 
 ## Planned Review-Quality Contracts
 
-The remaining contracts below belong to Features 26–34 and are **not implemented yet**
-(Feature 25 `review_findings` / fingerprints / `ConfirmedFinding` are implemented
-above). They are the shape source of truth when each numbered feature begins.
-Move each contract into the implemented sections above, and update the matching
-Zod/Drizzle code in the same increment.
+The remaining contracts below belong to Features 27–34 and are **not implemented yet**
+(Features 25–26 finding rows, fingerprints, and inline review comments are
+implemented above). They are the shape source of truth when each numbered feature
+begins. Move each contract into the implemented sections above, and update the
+matching Zod/Drizzle code in the same increment.
 
 ### Planned enums
 
