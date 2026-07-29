@@ -37,6 +37,7 @@ function createDependencies(
       markReviewRunning: vi.fn().mockResolvedValue({ id: "review-1" }),
       markReviewCompleted: vi.fn().mockResolvedValue({ id: "review-1" }),
       markReviewFailed: vi.fn().mockResolvedValue({ id: "review-1" }),
+      upsertConfirmedFindings: vi.fn().mockResolvedValue([]),
       ...overrides,
     },
     github: {
@@ -221,6 +222,72 @@ describe("review worker route", () => {
         outputTokens: 7,
       }),
     );
+    expect(dependencies.queries.upsertConfirmedFindings).toHaveBeenCalledWith([
+      expect.objectContaining({
+        installationId: 42,
+        repositoryId: 100,
+        prNumber: 7,
+        reviewId: "review-1",
+        headSha,
+        file: "src/row.tsx",
+        line: 1,
+        title: "Confirmed changed behavior",
+        confidence: "high",
+        observedBehavior: "The new branch returns an unsafe value.",
+        causalPath: "The changed return is consumed by the caller.",
+        violatedInvariant: "The caller must receive a safe value.",
+        fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    ]);
+  });
+
+  it("does not persist rejected or manual-verification candidates as finding rows", async () => {
+    const dependencies = createDependencies({}, {
+      fetchPrDiff: vi.fn().mockResolvedValue(
+        `diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new`,
+      ),
+    });
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Draft",
+        verdict: "concerns",
+        candidates: [{
+          severity: "high",
+          category: "bug",
+          file: "src/row.tsx",
+          line: 1,
+          title: "Needs human check",
+          detail: "Detail",
+          suggestion: null,
+          confidence: "medium",
+          observedBehavior: "Observed",
+          causalPath: "Path",
+          violatedInvariant: "Invariant",
+          requiresRuntimeVerification: false,
+          suggestedChange: null,
+        }],
+      },
+      usage: { inputTokens: 2, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.adjudicateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Manual only",
+        verdict: "approve",
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "manual_verification",
+          reason: "Needs browser check.",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.queries.upsertConfirmedFindings).not.toHaveBeenCalled();
   });
 
   it("fails closed when adjudication times out", async () => {
@@ -276,6 +343,7 @@ describe("review worker route", () => {
         manualCheckCandidates: 0,
       }),
     );
+    expect(dependencies.queries.upsertConfirmedFindings).not.toHaveBeenCalled();
   });
 
   it("does not fetch file context when the base prompt has no remaining budget", async () => {

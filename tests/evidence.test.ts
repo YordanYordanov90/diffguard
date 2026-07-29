@@ -80,6 +80,13 @@ describe("finding evidence gate", () => {
 
     expect(result.review.findings).toHaveLength(1);
     expect(result.review.findings[0].title).toBe("Changed behavior is unsafe");
+    expect(result.confirmedFindings).toHaveLength(1);
+    expect(result.confirmedFindings[0]).toMatchObject({
+      title: "Changed behavior is unsafe",
+      confidence: "high",
+      observedBehavior: "The changed value disables the required guard.",
+      requiresRuntimeVerification: false,
+    });
     expect(result.manualCount).toBe(1);
     expect(result.rejectedCount).toBe(0);
   });

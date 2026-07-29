@@ -1,11 +1,14 @@
-import { and, desc, eq, gte, inArray, isNotNull, lt, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne } from "drizzle-orm";
 
 import { db as defaultDb } from "./client";
 import {
   installations,
   repositories,
+  reviewFindings,
   reviews,
+  type FindingLifecycle,
   type SkipReason,
+  type StoredSuggestedChange,
 } from "./schema";
 
 type Database = typeof defaultDb;
@@ -553,4 +556,235 @@ export async function getReviewDetail(
     .limit(1);
 
   return result ?? null;
+}
+
+export type FindingUpsertInput = {
+  installationId: number;
+  repositoryId: number;
+  prNumber: number;
+  fingerprint: string;
+  confidence: "low" | "medium" | "high";
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  category: "security" | "bug" | "quality" | "performance";
+  file: string;
+  line: number | null;
+  title: string;
+  detail: string;
+  observedBehavior: string;
+  causalPath: string;
+  violatedInvariant: string;
+  suggestion: string | null;
+  suggestedChange: StoredSuggestedChange | null;
+  reviewId: string;
+  headSha: string;
+};
+
+/**
+ * Upsert a confirmed finding by (repository, PR, fingerprint).
+ * Never overwrites an existing github_comment_id.
+ * Never silently reopens dismissed findings; resolved reopening is Feature 28.
+ */
+export async function upsertFindingByFingerprint(
+  input: FindingUpsertInput,
+  database: Database = defaultDb,
+) {
+  const [repository] = await database
+    .select({ id: repositories.id })
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.id, input.repositoryId),
+        eq(repositories.installationId, input.installationId),
+      ),
+    )
+    .limit(1);
+
+  if (!repository) {
+    throw new Error("Repository is not registered for this installation.");
+  }
+
+  const [finding] = await database
+    .insert(reviewFindings)
+    .values({
+      installationId: input.installationId,
+      repositoryId: input.repositoryId,
+      prNumber: input.prNumber,
+      fingerprint: input.fingerprint,
+      status: "open",
+      confidence: input.confidence,
+      severity: input.severity,
+      category: input.category,
+      file: input.file,
+      line: input.line,
+      title: input.title,
+      detail: input.detail,
+      observedBehavior: input.observedBehavior,
+      causalPath: input.causalPath,
+      violatedInvariant: input.violatedInvariant,
+      suggestion: input.suggestion,
+      suggestedChange: input.suggestedChange,
+      introducedReviewId: input.reviewId,
+      lastReviewId: input.reviewId,
+      introducedSha: input.headSha,
+      lastSeenSha: input.headSha,
+    })
+    .onConflictDoUpdate({
+      target: [
+        reviewFindings.repositoryId,
+        reviewFindings.prNumber,
+        reviewFindings.fingerprint,
+      ],
+      set: {
+        confidence: input.confidence,
+        severity: input.severity,
+        category: input.category,
+        file: input.file,
+        line: input.line,
+        title: input.title,
+        detail: input.detail,
+        observedBehavior: input.observedBehavior,
+        causalPath: input.causalPath,
+        violatedInvariant: input.violatedInvariant,
+        suggestion: input.suggestion,
+        suggestedChange: input.suggestedChange,
+        lastReviewId: input.reviewId,
+        lastSeenSha: input.headSha,
+        updatedAt: new Date(),
+      },
+      setWhere: and(
+        eq(reviewFindings.installationId, input.installationId),
+        eq(reviewFindings.status, "open"),
+      ),
+    })
+    .returning();
+
+  if (finding) return finding;
+
+  // Conflict on a non-open finding: return the existing row without mutating lifecycle.
+  const [existing] = await database
+    .select()
+    .from(reviewFindings)
+    .where(
+      and(
+        eq(reviewFindings.installationId, input.installationId),
+        eq(reviewFindings.repositoryId, input.repositoryId),
+        eq(reviewFindings.prNumber, input.prNumber),
+        eq(reviewFindings.fingerprint, input.fingerprint),
+      ),
+    )
+    .limit(1);
+
+  return existing ?? null;
+}
+
+export async function listFindingsByReview(
+  installationId: number,
+  reviewId: string,
+  database: Database = defaultDb,
+) {
+  return database
+    .select()
+    .from(reviewFindings)
+    .where(
+      and(
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.lastReviewId, reviewId),
+      ),
+    )
+    .orderBy(desc(reviewFindings.createdAt));
+}
+
+export async function listOpenFindingsByPr(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  database: Database = defaultDb,
+) {
+  return database
+    .select()
+    .from(reviewFindings)
+    .where(
+      and(
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "open"),
+      ),
+    )
+    .orderBy(desc(reviewFindings.createdAt));
+}
+
+/**
+ * Attach a GitHub review comment id once. Never overwrites an existing id.
+ */
+export async function attachFindingGitHubCommentId(
+  installationId: number,
+  findingId: string,
+  githubCommentId: number,
+  database: Database = defaultDb,
+) {
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({ githubCommentId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        isNull(reviewFindings.githubCommentId),
+      ),
+    )
+    .returning();
+
+  return finding ?? null;
+}
+
+/**
+ * Mark a finding resolved or dismissed. Terminal statuses cannot silently reopen.
+ */
+export async function markFindingTerminalStatus(
+  installationId: number,
+  findingId: string,
+  status: Extract<FindingLifecycle, "resolved" | "dismissed">,
+  options: { resolvedSha?: string | null } = {},
+  database: Database = defaultDb,
+) {
+  const now = new Date();
+  const patch =
+    status === "resolved"
+      ? {
+          status,
+          resolvedSha: options.resolvedSha ?? null,
+          updatedAt: now,
+        }
+      : {
+          status,
+          dismissedAt: now,
+          updatedAt: now,
+        };
+
+  const [finding] = await database
+    .update(reviewFindings)
+    .set(patch)
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.status, "open"),
+      ),
+    )
+    .returning();
+
+  return finding ?? null;
+}
+
+export async function upsertConfirmedFindings(
+  inputs: FindingUpsertInput[],
+  database: Database = defaultDb,
+) {
+  const results = [];
+  for (const input of inputs) {
+    const finding = await upsertFindingByFingerprint(input, database);
+    if (finding) results.push(finding);
+  }
+  return results;
 }
