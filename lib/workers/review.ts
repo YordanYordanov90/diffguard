@@ -452,6 +452,8 @@ function inaccessibleIssueReason(status: Exclude<RepositoryIssueResult["status"]
       return "Issue was not found in this repository.";
     case "not_an_issue":
       return "Reference points to a pull request, not an issue.";
+    case "duplicate":
+      return "Issue is closed as a duplicate, so its requirements are unclear.";
     case "invalid":
       return "Issue response was invalid or incomplete.";
     case "unavailable":

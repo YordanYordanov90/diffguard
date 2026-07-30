@@ -47,6 +47,21 @@ describe("parseLinkedIssueReferences", () => {
     ]);
   });
 
+  it("preserves first-seen order across hash and URL references before capping", () => {
+    const body = [
+      "Fixes https://github.com/owner/repo/issues/1",
+      "Closes https://github.com/owner/repo/issues/2",
+      "Resolves https://github.com/owner/repo/issues/3",
+      "Fixes #4",
+    ].join("\n");
+
+    expect(parseLinkedIssueReferences(body, repo)).toEqual([
+      { issueNumber: 1 },
+      { issueNumber: 2 },
+      { issueNumber: 3 },
+    ]);
+  });
+
   it("ignores casual #mentions, bare numbers, and empty/malformed input", () => {
     expect(parseLinkedIssueReferences("See #12 and related to #3", repo)).toEqual([]);
     expect(parseLinkedIssueReferences("fixes 12", repo)).toEqual([]);

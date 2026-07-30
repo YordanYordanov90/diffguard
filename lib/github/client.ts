@@ -138,13 +138,22 @@ export type RepositoryIssueResult =
       body: string | null;
       state: string;
     }
-  | { status: "missing" | "forbidden" | "not_an_issue" | "invalid" | "unavailable" };
+  | {
+      status:
+        | "missing"
+        | "forbidden"
+        | "not_an_issue"
+        | "duplicate"
+        | "invalid"
+        | "unavailable";
+    };
 
 const repositoryIssueSchema = z.object({
   number: z.number().int().positive(),
   title: z.string(),
   body: z.string().nullable().optional(),
   state: z.string().min(1),
+  state_reason: z.enum(["completed", "not_planned", "duplicate", "reopened"]).nullable().optional(),
   /** Present when the "issue" is actually a pull request. */
   pull_request: z.unknown().optional(),
 });
@@ -461,6 +470,9 @@ export function createGitHubClient(
           return { status: "not_an_issue" };
         }
         if (parsed.data.number !== issueNumber) return { status: "invalid" };
+        if (parsed.data.state === "closed" && parsed.data.state_reason === "duplicate") {
+          return { status: "duplicate" };
+        }
         return {
           status: "fetched",
           issueNumber: parsed.data.number,

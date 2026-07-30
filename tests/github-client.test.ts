@@ -258,6 +258,19 @@ describe("GitHub client", () => {
       status: "not_an_issue",
     });
 
+    request.mockResolvedValueOnce({
+      data: {
+        number: 14,
+        title: "Duplicate issue",
+        body: "Tracked elsewhere.",
+        state: "closed",
+        state_reason: "duplicate",
+      },
+    });
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 14)).resolves.toEqual({
+      status: "duplicate",
+    });
+
     request.mockRejectedValueOnce(
       new RequestError("Forbidden", 403, {
         response: {
@@ -269,7 +282,7 @@ describe("GitHub client", () => {
         request: { method: "GET", url: "https://api.github.com", headers: {} },
       }),
     );
-    await expect(client.fetchRepositoryIssue(42, "owner/repo", 14)).resolves.toEqual({
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 15)).resolves.toEqual({
       status: "forbidden",
     });
 
@@ -284,7 +297,7 @@ describe("GitHub client", () => {
         request: { method: "GET", url: "https://api.github.com", headers: {} },
       }),
     );
-    await expect(client.fetchRepositoryIssue(42, "owner/repo", 15)).resolves.toEqual({
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 16)).resolves.toEqual({
       status: "missing",
     });
 

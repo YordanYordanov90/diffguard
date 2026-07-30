@@ -54,7 +54,7 @@ export type LinkedIssueFetchOutcome =
   | {
       status: "inaccessible";
       issueNumber: number;
-      reason: "missing" | "forbidden" | "not_an_issue" | "invalid" | "unavailable";
+      reason: "missing" | "forbidden" | "not_an_issue" | "duplicate" | "invalid" | "unavailable";
     };
 
 function parseRepositoryName(fullName: string): { owner: string; repo: string } | null {
@@ -82,6 +82,7 @@ export function parseLinkedIssueReferences(
 
   const seen = new Set<number>();
   const ordered: number[] = [];
+  const matches: Array<{ index: number; raw: string }> = [];
 
   const add = (raw: string) => {
     const issueNumber = Number(raw);
@@ -93,7 +94,7 @@ export function parseLinkedIssueReferences(
   };
 
   for (const match of prBody.matchAll(HASH_REF)) {
-    add(match[1] ?? "");
+    matches.push({ index: match.index ?? 0, raw: match[1] ?? "" });
   }
 
   for (const match of prBody.matchAll(URL_REF)) {
@@ -106,7 +107,11 @@ export function parseLinkedIssueReferences(
     ) {
       continue;
     }
-    add(number);
+    matches.push({ index: match.index ?? 0, raw: number });
+  }
+
+  for (const match of matches.sort((left, right) => left.index - right.index)) {
+    add(match.raw);
   }
 
   return ordered.map((issueNumber) => ({ issueNumber }));

@@ -375,6 +375,37 @@ describe("review worker route", () => {
         verdict: "approve",
       }),
     );
+
+    const duplicateDeps = createDependencies({}, {
+      fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "duplicate" }),
+    });
+    duplicateDeps.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Code review still works.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [],
+        linkedIssues: [],
+      },
+      usage: { inputTokens: 4, outputTokens: 1 },
+      durationMs: 5,
+    });
+    const duplicateResponse = await handleReviewWorker(request(linkedJob), duplicateDeps);
+    expect(duplicateResponse.status).toBe(200);
+    expect(duplicateDeps.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        linkedIssueAssessments: [
+          expect.objectContaining({
+            issueNumber: 12,
+            status: "unclear",
+            rationale: "Issue is closed as a duplicate, so its requirements are unclear.",
+          }),
+        ],
+        verdict: "approve",
+      }),
+    );
   });
 
   it("reviews only the commit range for a normal descendant push", async () => {
