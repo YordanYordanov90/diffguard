@@ -54,6 +54,8 @@ function createDependencies(
       listOpenFindingsByPr: vi.fn().mockResolvedValue([]),
       reconcileFindings: reconcile,
       markFindingResolutionReplied: vi.fn().mockResolvedValue(null),
+      claimFindingResolutionReply: vi.fn().mockResolvedValue({ id: "finding-1" }),
+      releaseFindingResolutionReply: vi.fn().mockResolvedValue(null),
       ...overrides,
     },
     github: {
@@ -130,6 +132,7 @@ function storedOpenFinding(overrides: Record<string, unknown> = {}) {
     lastSeenSha: previousHeadSha,
     resolvedSha: null,
     resolutionRepliedAt: null,
+    resolutionReplyClaimedAt: null,
     ...overrides,
   };
 }
@@ -412,7 +415,60 @@ describe("review worker route", () => {
       100,
       7,
       openFinding.id,
+      headSha,
     );
+    expect(dependencies.queries.claimFindingResolutionReply).toHaveBeenCalledWith(
+      42,
+      100,
+      7,
+      openFinding.id,
+      headSha,
+    );
+  });
+
+  it("does not reply when the resolution claim is lost", async () => {
+    const openFinding = storedOpenFinding({ githubCommentId: 7001 });
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: 100,
+          updatedAt: new Date("2026-01-01"),
+        }),
+        listOpenFindingsByPr: vi.fn().mockResolvedValue([openFinding]),
+        reconcileFindings: vi.fn().mockResolvedValue({
+          findings: [],
+          resolved: [openFinding],
+        }),
+        claimFindingResolutionReply: vi.fn().mockResolvedValue(null),
+      },
+      {
+        fetchCommitRangeDiff: vi.fn().mockResolvedValue(
+          "diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new",
+        ),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "The prior finding is fixed.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [{
+          findingId: openFinding.id,
+          status: "resolved",
+          reason: "The changed hunk restores the guard.",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.replyToPullRequestReviewComment).not.toHaveBeenCalled();
+    expect(dependencies.queries.releaseFindingResolutionReply).not.toHaveBeenCalled();
   });
 
   it("falls back to a disclosed full review on force-push / rewritten history", async () => {

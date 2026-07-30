@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
 import { db as defaultDb } from "./client";
 import {
@@ -693,8 +693,11 @@ function buildFindingUpsert(
         ...(reopenResolved
           ? {
               status: "open" as const,
+              previousResolvedSha: sql`${reviewFindings.resolvedSha}`,
+              previousResolutionRepliedAt: sql`${reviewFindings.resolutionRepliedAt}`,
               resolvedSha: null,
               resolutionRepliedAt: null,
+              resolutionReplyClaimedAt: null,
             }
           : {}),
         confidence: input.confidence,
@@ -718,7 +721,10 @@ function buildFindingUpsert(
         reopenResolved
           ? or(
               eq(reviewFindings.status, "open"),
-              eq(reviewFindings.status, "resolved"),
+              and(
+                eq(reviewFindings.status, "resolved"),
+                isNull(reviewFindings.resolutionReplyClaimedAt),
+              ),
             )
           : eq(reviewFindings.status, "open"),
       ),
@@ -824,12 +830,17 @@ export async function markFindingResolutionReplied(
   repositoryId: number,
   prNumber: number,
   findingId: string,
+  resolvedSha: string,
   database: Database = defaultDb,
 ) {
   const now = new Date();
   const [finding] = await database
     .update(reviewFindings)
-    .set({ resolutionRepliedAt: now, updatedAt: now })
+    .set({
+      resolutionRepliedAt: now,
+      resolutionReplyClaimedAt: null,
+      updatedAt: now,
+    })
     .where(
       and(
         eq(reviewFindings.id, findingId),
@@ -837,7 +848,63 @@ export async function markFindingResolutionReplied(
         eq(reviewFindings.repositoryId, repositoryId),
         eq(reviewFindings.prNumber, prNumber),
         eq(reviewFindings.status, "resolved"),
+        eq(reviewFindings.resolvedSha, resolvedSha),
         isNull(reviewFindings.resolutionRepliedAt),
+        isNotNull(reviewFindings.resolutionReplyClaimedAt),
+      ),
+    )
+    .returning();
+  return finding ?? null;
+}
+
+export async function claimFindingResolutionReply(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  findingId: string,
+  resolvedSha: string,
+  database: Database = defaultDb,
+) {
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({ resolutionReplyClaimedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "resolved"),
+        eq(reviewFindings.resolvedSha, resolvedSha),
+        isNull(reviewFindings.resolutionRepliedAt),
+        isNull(reviewFindings.resolutionReplyClaimedAt),
+      ),
+    )
+    .returning();
+  return finding ?? null;
+}
+
+export async function releaseFindingResolutionReply(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  findingId: string,
+  resolvedSha: string,
+  database: Database = defaultDb,
+) {
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({ resolutionReplyClaimedAt: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "resolved"),
+        eq(reviewFindings.resolvedSha, resolvedSha),
+        isNull(reviewFindings.resolutionRepliedAt),
+        isNotNull(reviewFindings.resolutionReplyClaimedAt),
       ),
     )
     .returning();

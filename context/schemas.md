@@ -114,8 +114,11 @@ last_review_id        uuid NOT NULL FK -> reviews.id
 introduced_sha        text NOT NULL
 last_seen_sha         text NOT NULL
 resolved_sha          text NULL
+previous_resolved_sha text NULL       // prior resolution preserved on reopen
 github_comment_id     bigint NULL
 resolution_replied_at timestamptz NULL
+previous_resolution_replied_at timestamptz NULL
+resolution_reply_claimed_at timestamptz NULL // guarded reply lease
 dismissed_at          timestamptz NULL
 created_at            timestamptz NOT NULL DEFAULT now()
 updated_at            timestamptz NOT NULL DEFAULT now()

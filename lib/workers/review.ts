@@ -12,6 +12,7 @@ import {
 import { parseEnv } from "@/lib/config/env";
 import type {
   attachFindingGitHubCommentId,
+  claimFindingResolutionReply,
   countReviewsToday,
   FindingUpsertInput,
   getInstallationModel,
@@ -25,6 +26,7 @@ import type {
   markReviewSkipped,
   listOpenFindingsByPr,
   markFindingResolutionReplied,
+  releaseFindingResolutionReply,
   reconcileFindings,
   upsertConfirmedFindings,
 } from "@/lib/db/queries";
@@ -135,6 +137,12 @@ type ReviewQueries = {
   markFindingResolutionReplied: (
     ...args: Parameters<typeof markFindingResolutionReplied>
   ) => Promise<unknown>;
+  claimFindingResolutionReply: (
+    ...args: Parameters<typeof claimFindingResolutionReply>
+  ) => Promise<StoredOpenFinding | null>;
+  releaseFindingResolutionReply: (
+    ...args: Parameters<typeof releaseFindingResolutionReply>
+  ) => Promise<unknown>;
 };
 
 type GitHubClient = {
@@ -238,6 +246,14 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       async markFindingResolutionReplied(...args) {
         const { markFindingResolutionReplied } = await import("@/lib/db/queries");
         return markFindingResolutionReplied(...args);
+      },
+      async claimFindingResolutionReply(...args) {
+        const { claimFindingResolutionReply } = await import("@/lib/db/queries");
+        return claimFindingResolutionReply(...args);
+      },
+      async releaseFindingResolutionReply(...args) {
+        const { releaseFindingResolutionReply } = await import("@/lib/db/queries");
+        return releaseFindingResolutionReply(...args);
       },
     },
     github: {
@@ -983,6 +999,14 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         finding.githubCommentId,
       );
       if (!commentIsInScope) continue;
+      const claimed = await dependencies.queries.claimFindingResolutionReply(
+        job.installationId,
+        job.repositoryId,
+        job.prNumber,
+        finding.id,
+        job.headSha,
+      );
+      if (!claimed) continue;
       try {
         await dependencies.github.replyToPullRequestReviewComment(
           job.installationId,
@@ -996,9 +1020,16 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
           job.repositoryId,
           job.prNumber,
           finding.id,
+          job.headSha,
         );
       } catch {
-        // The summary is canonical; a later retry can safely attempt the reply.
+        await dependencies.queries.releaseFindingResolutionReply(
+          job.installationId,
+          job.repositoryId,
+          job.prNumber,
+          finding.id,
+          job.headSha,
+        );
       }
     }
     return {

@@ -200,8 +200,17 @@ export const reviewFindings = pgTable(
     introducedSha: text("introduced_sha").notNull(),
     lastSeenSha: text("last_seen_sha").notNull(),
     resolvedSha: text("resolved_sha"),
+    previousResolvedSha: text("previous_resolved_sha"),
     githubCommentId: bigint("github_comment_id", { mode: "number" }),
     resolutionRepliedAt: timestamp("resolution_replied_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    previousResolutionRepliedAt: timestamp("previous_resolution_replied_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    resolutionReplyClaimedAt: timestamp("resolution_reply_claimed_at", {
       withTimezone: true,
       mode: "date",
     }),

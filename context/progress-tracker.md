@@ -276,10 +276,12 @@ Update this file after every meaningful implementation change.
   findings whose file is touched by the range, and accept bounded structured
   open/resolved updates for those ids alone. Omitted or invalid updates remain
   open; confirmed reoccurrences reopen resolved rows but never dismissed rows.
-  Reconciliation persists in one Neon batch, the summary separates new,
-  recurring, still-open, and resolved findings, and first resolutions reply to
-  their inline thread once. Range-fetch failures broaden to a full review, and
-  the worker rechecks the head before durable finding writes.
+  Reconciliation persists in one Neon batch, preserves prior resolution
+  metadata on reopen, and the summary separates new, recurring, still-open,
+  and resolved findings. First resolutions acquire a tenant/PR-scoped reply
+  lease before replying to their inline thread; failed replies release the
+  lease for retry. Range-fetch failures broaden to a full review, and the
+  worker rechecks the head before durable finding writes.
 
 ## In Progress
 
