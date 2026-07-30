@@ -13,6 +13,7 @@ import {
 } from "./schema";
 
 type Database = typeof defaultDb;
+const RESOLUTION_REPLY_LEASE_MS = 5 * 60 * 1000;
 
 export type InstallationInput = {
   id: number;
@@ -658,6 +659,7 @@ function buildFindingUpsert(
   database: Database,
   reopenResolved = false,
 ) {
+  const leaseExpiredAt = new Date(Date.now() - RESOLUTION_REPLY_LEASE_MS);
   return database
     .insert(reviewFindings)
     .values({
@@ -698,6 +700,8 @@ function buildFindingUpsert(
               resolvedSha: null,
               resolutionRepliedAt: null,
               resolutionReplyClaimedAt: null,
+              resolutionReplyAttemptId: null,
+              resolutionReplyCommentId: null,
             }
           : {}),
         confidence: input.confidence,
@@ -723,7 +727,10 @@ function buildFindingUpsert(
               eq(reviewFindings.status, "open"),
               and(
                 eq(reviewFindings.status, "resolved"),
-                isNull(reviewFindings.resolutionReplyClaimedAt),
+                or(
+                  isNull(reviewFindings.resolutionReplyClaimedAt),
+                  lt(reviewFindings.resolutionReplyClaimedAt, leaseExpiredAt),
+                ),
               ),
             )
           : eq(reviewFindings.status, "open"),
@@ -831,6 +838,8 @@ export async function markFindingResolutionReplied(
   prNumber: number,
   findingId: string,
   resolvedSha: string,
+  attemptId: string,
+  replyCommentId: number,
   database: Database = defaultDb,
 ) {
   const now = new Date();
@@ -839,6 +848,8 @@ export async function markFindingResolutionReplied(
     .set({
       resolutionRepliedAt: now,
       resolutionReplyClaimedAt: null,
+      resolutionReplyAttemptId: null,
+      resolutionReplyCommentId: replyCommentId,
       updatedAt: now,
     })
     .where(
@@ -849,6 +860,7 @@ export async function markFindingResolutionReplied(
         eq(reviewFindings.prNumber, prNumber),
         eq(reviewFindings.status, "resolved"),
         eq(reviewFindings.resolvedSha, resolvedSha),
+        eq(reviewFindings.resolutionReplyAttemptId, attemptId),
         isNull(reviewFindings.resolutionRepliedAt),
         isNotNull(reviewFindings.resolutionReplyClaimedAt),
       ),
@@ -863,11 +875,17 @@ export async function claimFindingResolutionReply(
   prNumber: number,
   findingId: string,
   resolvedSha: string,
+  attemptId: string,
   database: Database = defaultDb,
 ) {
+  const leaseExpiredAt = new Date(Date.now() - RESOLUTION_REPLY_LEASE_MS);
   const [finding] = await database
     .update(reviewFindings)
-    .set({ resolutionReplyClaimedAt: new Date(), updatedAt: new Date() })
+    .set({
+      resolutionReplyClaimedAt: new Date(),
+      resolutionReplyAttemptId: attemptId,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(reviewFindings.id, findingId),
@@ -877,7 +895,10 @@ export async function claimFindingResolutionReply(
         eq(reviewFindings.status, "resolved"),
         eq(reviewFindings.resolvedSha, resolvedSha),
         isNull(reviewFindings.resolutionRepliedAt),
-        isNull(reviewFindings.resolutionReplyClaimedAt),
+        or(
+          isNull(reviewFindings.resolutionReplyClaimedAt),
+          lt(reviewFindings.resolutionReplyClaimedAt, leaseExpiredAt),
+        ),
       ),
     )
     .returning();
@@ -890,11 +911,16 @@ export async function releaseFindingResolutionReply(
   prNumber: number,
   findingId: string,
   resolvedSha: string,
+  attemptId: string,
   database: Database = defaultDb,
 ) {
   const [finding] = await database
     .update(reviewFindings)
-    .set({ resolutionReplyClaimedAt: null, updatedAt: new Date() })
+    .set({
+      resolutionReplyClaimedAt: null,
+      resolutionReplyAttemptId: null,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(reviewFindings.id, findingId),
@@ -903,6 +929,7 @@ export async function releaseFindingResolutionReply(
         eq(reviewFindings.prNumber, prNumber),
         eq(reviewFindings.status, "resolved"),
         eq(reviewFindings.resolvedSha, resolvedSha),
+        eq(reviewFindings.resolutionReplyAttemptId, attemptId),
         isNull(reviewFindings.resolutionRepliedAt),
         isNotNull(reviewFindings.resolutionReplyClaimedAt),
       ),

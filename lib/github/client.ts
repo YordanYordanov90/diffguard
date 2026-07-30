@@ -99,6 +99,12 @@ const pullRequestReviewCommentScopeSchema = z.object({
   pull_request_url: z.string().url(),
 });
 
+const pullRequestReviewReplySchema = z.object({
+  id: z.number().int().positive(),
+  in_reply_to_id: z.number().int().positive().nullable().optional(),
+  body: z.string(),
+});
+
 export type PullRequestReviewCommentInput = {
   path: string;
   body: string;
@@ -572,6 +578,37 @@ export function createGitHubClient(
       }
     },
 
+    /** Find a previously accepted resolution reply by its deterministic marker. */
+    async findPullRequestReviewReply(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      parentCommentId: number,
+      marker: string,
+    ) {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+          {
+            owner,
+            repo,
+            pull_number: prNumber,
+            per_page: 100,
+          },
+        );
+        const parsed = z.array(pullRequestReviewReplySchema).safeParse(response.data);
+        if (!parsed.success) return null;
+        return parsed.data.find(
+          (comment) =>
+            comment.in_reply_to_id === parentCommentId && comment.body.includes(marker),
+        )?.id ?? null;
+      } catch {
+        return null;
+      }
+    },
+
     /** Submit one COMMENT review at the exact head SHA. */
     async createPullRequestReview(
       installationId: number,
@@ -706,6 +743,9 @@ export const githubClient = {
   verifyPullRequestReviewCommentScope: (
     ...args: Parameters<GitHubClient["verifyPullRequestReviewCommentScope"]>
   ) => getDefaultClient().verifyPullRequestReviewCommentScope(...args),
+  findPullRequestReviewReply: (
+    ...args: Parameters<GitHubClient["findPullRequestReviewReply"]>
+  ) => getDefaultClient().findPullRequestReviewReply(...args),
   createPullRequestReview: (
     ...args: Parameters<GitHubClient["createPullRequestReview"]>
   ) => getDefaultClient().createPullRequestReview(...args),
@@ -729,6 +769,7 @@ export const {
   upsertComment,
   replyToPullRequestReviewComment,
   verifyPullRequestReviewCommentScope,
+  findPullRequestReviewReply,
   createPullRequestReview,
   listPullRequestReviewComments,
   getUserInstallations,

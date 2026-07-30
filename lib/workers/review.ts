@@ -1,4 +1,5 @@
 import { Receiver } from "@upstash/qstash";
+import { randomUUID } from "node:crypto";
 
 import {
   DAILY_REVIEW_CAP,
@@ -39,6 +40,7 @@ import {
   fetchPrHeadSha,
   fetchRepositoryFile,
   fetchRepositoryTree,
+  findPullRequestReviewReply,
   isCommitOnPullRequest,
   replyToPullRequestReviewComment,
   verifyPullRequestReviewCommentScope,
@@ -159,6 +161,7 @@ type GitHubClient = {
   listPullRequestReviewComments: typeof listPullRequestReviewComments;
   replyToPullRequestReviewComment: typeof replyToPullRequestReviewComment;
   verifyPullRequestReviewCommentScope: typeof verifyPullRequestReviewCommentScope;
+  findPullRequestReviewReply: typeof findPullRequestReviewReply;
 };
 
 type QStashVerifier = {
@@ -270,6 +273,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       listPullRequestReviewComments,
       replyToPullRequestReviewComment,
       verifyPullRequestReviewCommentScope,
+      findPullRequestReviewReply,
     },
     generateReview,
     adjudicateReview,
@@ -437,8 +441,12 @@ function toOpenFinding(finding: StoredOpenFinding): OpenFinding {
   };
 }
 
-function resolutionReplyBody(headSha: string): string {
-  return `✅ DiffGuard marked this finding resolved in \`${headSha.slice(0, 7)}\`.`;
+function resolutionReplyMarker(findingId: string, headSha: string): string {
+  return `<!-- diffguard-resolution:${findingId}:${headSha} -->`;
+}
+
+function resolutionReplyBody(findingId: string, headSha: string): string {
+  return `✅ DiffGuard marked this finding resolved in \`${headSha.slice(0, 7)}\`.\n\n${resolutionReplyMarker(findingId, headSha)}`;
 }
 
 function addUsage(
@@ -999,29 +1007,51 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         finding.githubCommentId,
       );
       if (!commentIsInScope) continue;
+      const attemptId = randomUUID();
       const claimed = await dependencies.queries.claimFindingResolutionReply(
         job.installationId,
         job.repositoryId,
         job.prNumber,
         finding.id,
         job.headSha,
+        attemptId,
       );
       if (!claimed) continue;
       try {
-        await dependencies.github.replyToPullRequestReviewComment(
+        const marker = resolutionReplyMarker(finding.id, job.headSha);
+        const existingReplyId = await dependencies.github.findPullRequestReviewReply(
           job.installationId,
           job.repoFullName,
           job.prNumber,
           finding.githubCommentId,
-          resolutionReplyBody(job.headSha),
+          marker,
         );
-        await dependencies.queries.markFindingResolutionReplied(
+        const replyCommentId = existingReplyId ?? await dependencies.github.replyToPullRequestReviewComment(
+          job.installationId,
+          job.repoFullName,
+          job.prNumber,
+          finding.githubCommentId,
+          resolutionReplyBody(finding.id, job.headSha),
+        );
+        const marked = await dependencies.queries.markFindingResolutionReplied(
           job.installationId,
           job.repositoryId,
           job.prNumber,
           finding.id,
           job.headSha,
+          attemptId,
+          replyCommentId,
         );
+        if (!marked) {
+          await dependencies.queries.releaseFindingResolutionReply(
+            job.installationId,
+            job.repositoryId,
+            job.prNumber,
+            finding.id,
+            job.headSha,
+            attemptId,
+          );
+        }
       } catch {
         await dependencies.queries.releaseFindingResolutionReply(
           job.installationId,
@@ -1029,6 +1059,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
           job.prNumber,
           finding.id,
           job.headSha,
+          attemptId,
         );
       }
     }

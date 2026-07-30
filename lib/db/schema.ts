@@ -214,6 +214,10 @@ export const reviewFindings = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    resolutionReplyAttemptId: uuid("resolution_reply_attempt_id"),
+    resolutionReplyCommentId: bigint("resolution_reply_comment_id", {
+      mode: "number",
+    }),
     dismissedAt: timestamp("dismissed_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()

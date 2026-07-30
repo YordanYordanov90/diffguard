@@ -279,9 +279,11 @@ Update this file after every meaningful implementation change.
   Reconciliation persists in one Neon batch, preserves prior resolution
   metadata on reopen, and the summary separates new, recurring, still-open,
   and resolved findings. First resolutions acquire a tenant/PR-scoped reply
-  lease before replying to their inline thread; failed replies release the
-  lease for retry. Range-fetch failures broaden to a full review, and the
-  worker rechecks the head before durable finding writes.
+  lease before replying to their inline thread; each attempt has a unique
+  token and deterministic marker, accepted reply ids are persisted, and failed
+  replies release only their own lease for retry. Range-fetch failures broaden
+  to a full review, and the worker rechecks the head before durable finding
+  writes.
 
 ## In Progress
 

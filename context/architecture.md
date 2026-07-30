@@ -122,9 +122,11 @@
   atomically, preserves the prior resolution SHA/timestamp on reopen, and never
   reopens dismissed findings. It renders new/still-open/resolved outcomes and
   acquires a tenant/PR-scoped reply lease before replying once to an existing
-  inline thread; claimed rows cannot reopen until the lease is completed or
-  released after a failed reply. The head is rechecked before durable
-  reconciliation writes and again before summary publication.
+  inline thread; each attempt has a unique token and deterministic body marker,
+  claimed rows cannot reopen until the lease is completed or released after a
+  failed reply, and accepted reply ids are persisted for retry recovery. The
+  head is rechecked before durable reconciliation writes and again before
+  summary publication.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

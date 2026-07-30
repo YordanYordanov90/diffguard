@@ -119,6 +119,8 @@ github_comment_id     bigint NULL
 resolution_replied_at timestamptz NULL
 previous_resolution_replied_at timestamptz NULL
 resolution_reply_claimed_at timestamptz NULL // guarded reply lease
+resolution_reply_attempt_id uuid NULL       // unique reply attempt token
+resolution_reply_comment_id bigint NULL     // durable GitHub reply id
 dismissed_at          timestamptz NULL
 created_at            timestamptz NOT NULL DEFAULT now()
 updated_at            timestamptz NOT NULL DEFAULT now()

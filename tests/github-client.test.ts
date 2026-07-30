@@ -46,6 +46,9 @@ function createMockClient(
         },
       });
     }
+    if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}/comments") {
+      return Promise.resolve({ data: [] });
+    }
     if (route.includes("/pulls/") && route.endsWith("/reviews") && route.startsWith("POST")) {
       return Promise.resolve({ data: { id: 6001 } });
     }
@@ -395,6 +398,27 @@ describe("GitHub client", () => {
     await expect(
       client.verifyPullRequestReviewCommentScope(42, "owner/repo", 7, 7002),
     ).resolves.toBe(false);
+  });
+
+  it("finds an existing deterministic resolution reply", async () => {
+    const { client, request } = createMockClient();
+    request.mockResolvedValueOnce({
+      data: [
+        {
+          id: 8001,
+          in_reply_to_id: 7001,
+          body: "resolved <!-- marker -->",
+        },
+      ],
+    });
+
+    await expect(
+      client.findPullRequestReviewReply(42, "owner/repo", 7, 7001, "<!-- marker -->"),
+    ).resolves.toBe(8001);
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      { owner: "owner", repo: "repo", pull_number: 7, per_page: 100 },
+    );
   });
 
   it("submits one COMMENT review and retrieves its comment ids separately", async () => {

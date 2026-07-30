@@ -53,7 +53,7 @@ function createDependencies(
       attachFindingGitHubCommentId: vi.fn().mockResolvedValue(null),
       listOpenFindingsByPr: vi.fn().mockResolvedValue([]),
       reconcileFindings: reconcile,
-      markFindingResolutionReplied: vi.fn().mockResolvedValue(null),
+      markFindingResolutionReplied: vi.fn().mockResolvedValue({ id: "finding-1" }),
       claimFindingResolutionReply: vi.fn().mockResolvedValue({ id: "finding-1" }),
       releaseFindingResolutionReply: vi.fn().mockResolvedValue(null),
       ...overrides,
@@ -80,6 +80,7 @@ function createDependencies(
       listPullRequestReviewComments: vi.fn().mockResolvedValue([]),
       replyToPullRequestReviewComment: vi.fn().mockResolvedValue(7002),
       verifyPullRequestReviewCommentScope: vi.fn().mockResolvedValue(true),
+      findPullRequestReviewReply: vi.fn().mockResolvedValue(null),
       ...githubOverrides,
     },
     generateReview: vi.fn().mockResolvedValue({
@@ -133,6 +134,8 @@ function storedOpenFinding(overrides: Record<string, unknown> = {}) {
     resolvedSha: null,
     resolutionRepliedAt: null,
     resolutionReplyClaimedAt: null,
+    resolutionReplyAttemptId: null,
+    resolutionReplyCommentId: null,
     ...overrides,
   };
 }
@@ -416,6 +419,8 @@ describe("review worker route", () => {
       7,
       openFinding.id,
       headSha,
+      expect.any(String),
+      7002,
     );
     expect(dependencies.queries.claimFindingResolutionReply).toHaveBeenCalledWith(
       42,
@@ -423,7 +428,16 @@ describe("review worker route", () => {
       7,
       openFinding.id,
       headSha,
+      expect.any(String),
     );
+    expect(dependencies.github.findPullRequestReviewReply).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      7001,
+      expect.stringContaining(openFinding.id),
+    );
+    expect(dependencies.queries.releaseFindingResolutionReply).not.toHaveBeenCalled();
   });
 
   it("does not reply when the resolution claim is lost", async () => {
@@ -469,6 +483,59 @@ describe("review worker route", () => {
     expect(response.status).toBe(200);
     expect(dependencies.github.replyToPullRequestReviewComment).not.toHaveBeenCalled();
     expect(dependencies.queries.releaseFindingResolutionReply).not.toHaveBeenCalled();
+  });
+
+  it("records an existing reply during retry without reposting", async () => {
+    const openFinding = storedOpenFinding({ githubCommentId: 7001 });
+    const dependencies = createDependencies(
+      {
+        getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+          id: "review-0",
+          headSha: previousHeadSha,
+          commentId: 100,
+          updatedAt: new Date("2026-01-01"),
+        }),
+        listOpenFindingsByPr: vi.fn().mockResolvedValue([openFinding]),
+        reconcileFindings: vi.fn().mockResolvedValue({
+          findings: [],
+          resolved: [openFinding],
+        }),
+      },
+      {
+        fetchCommitRangeDiff: vi.fn().mockResolvedValue(
+          "diff --git a/src/row.tsx b/src/row.tsx\n@@ -1 +1 @@\n-old\n+new",
+        ),
+        findPullRequestReviewReply: vi.fn().mockResolvedValue(7333),
+      },
+    );
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "The prior finding is fixed.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [{
+          findingId: openFinding.id,
+          status: "resolved",
+          reason: "The changed hunk restores the guard.",
+        }],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      durationMs: 1,
+    });
+
+    const response = await handleReviewWorker(request(), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.replyToPullRequestReviewComment).not.toHaveBeenCalled();
+    expect(dependencies.queries.markFindingResolutionReplied).toHaveBeenCalledWith(
+      42,
+      100,
+      7,
+      openFinding.id,
+      headSha,
+      expect.any(String),
+      7333,
+    );
   });
 
   it("falls back to a disclosed full review on force-push / rewritten history", async () => {
