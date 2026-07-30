@@ -1,0 +1,1 @@
+ALTER TABLE "reviews" ADD COLUMN "linked_issue_assessments" jsonb DEFAULT '[]'::jsonb NOT NULL;

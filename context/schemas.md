@@ -18,6 +18,7 @@ Verdict      = "approve" | "comment" | "concerns"
 FindingConfidence = "low" | "medium" | "high"
 FindingDecision   = "confirmed" | "rejected" | "manual_verification"
 FindingLifecycle  = "open" | "resolved" | "dismissed"
+IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -69,6 +70,7 @@ rejected_findings        integer NOT NULL DEFAULT 0
 manual_check_candidates  integer NOT NULL DEFAULT 0
 adjudication_model       text NULL
 adjudication_duration_ms integer NULL
+linked_issue_assessments jsonb NOT NULL DEFAULT '[]'  // Feature 29; never issue body
 skipped_files    text[] NOT NULL DEFAULT '{}'  // over-budget disclosure
 model            text NULL
 input_tokens     integer NULL
@@ -259,11 +261,24 @@ FindingUpdate = {
   reason:    string
 }
 
+IssueAssessment = {
+  issueNumber: number
+  status:      IssueAssessmentStatus
+  rationale:   string
+  unmetRequirements: string[]
+}
+
+/** Persisted on reviews.linked_issue_assessments — title only, never body. */
+PersistedIssueAssessment = IssueAssessment & {
+  title: string
+}
+
 CandidateReviewOutput = {
   summary:    string
   verdict:    Verdict
   candidates: FindingCandidate[]
   findingUpdates: FindingUpdate[]  // defaults to [] when no prior finding changes
+  linkedIssues: IssueAssessment[]  // defaults to []; allowlisted issue numbers only
 }
 
 FindingAdjudication = {
@@ -295,7 +310,11 @@ or arbitrary adjudication ids confirm nothing for the affected candidate.
 Fingerprints are never accepted from the LLM. Finding updates may reference
 only tenant/PR-scoped ids independently allowlisted from open findings whose
 file was touched by the incremental range; omitted or invalid updates preserve
-the existing finding as open.
+the existing finding as open. Linked issue assessments may reference only
+server-parsed same-repo closing references (max three); omitted, inaccessible,
+or fabricated issue numbers become `unclear` and never invent requirements.
+Issue title/body are bounded, delimited untrusted prompt context only — full
+bodies are never persisted.
 
 ## Webhook Boundary (Zod — validated after HMAC verification)
 
@@ -374,6 +393,11 @@ PromptContext = {
     reason: string
     content: string
   }[]                          // one-hop exact-head context, delimited untrusted
+  linkedIssues: {
+    issueNumber: number
+    title: string
+    body: string | null
+  }[]                          // explicit closing refs only, delimited untrusted
 }
 ```
 
@@ -413,18 +437,14 @@ matching Zod/Drizzle code in the same increment.
 ```ts
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
-IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-### Planned reviews additions (Feature 29)
+### Implemented: IssueAssessmentStatus (Feature 29)
 
 ```ts
-linked_issue_assessments jsonb NOT NULL DEFAULT "[]"
+IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 ```
-
-The JSON column is validated as `IssueAssessment[]` before every write and
-after every read.
 
 ### Review job (QStash — Feature 27 addition)
 
@@ -564,19 +584,14 @@ FindingUpdate = {
   reason:    string
 }
 
-IssueAssessment = {
-  issueNumber: number
-  status:      IssueAssessmentStatus
-  rationale:   string
-  unmetRequirements: string[]
-}
+// IssueAssessment + CandidateReviewOutput.linkedIssues implemented above (Feature 29).
 
 ReviewOutputV2 = {
   summary:          string
   verdict:          Verdict
   findings:         FindingV2[]
   findingUpdates:   FindingUpdate[]
-  linkedIssues:     IssueAssessment[]
+  linkedIssues:     IssueAssessment[]  // also on CandidateReviewOutput
 }
 
 ChatResponse = {
@@ -595,15 +610,11 @@ strings and arrays receive explicit Zod length limits in the implementing
 feature. Candidate ids, finding-update ids, and issue numbers are checked
 against server-built allowlists after schema validation.
 
-### Planned prompt context additions (Features 29–31)
+### Planned prompt context additions (Feature 31)
 
 ```ts
 PromptContextV2 = PromptContext & {
-  linkedIssues: {
-    issueNumber: number
-    title: string
-    body: string | null
-  }[]
+  // linkedIssues implemented above (Feature 29)
   repositoryLearnings: {
     id: string
     guidance: string

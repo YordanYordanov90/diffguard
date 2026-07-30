@@ -102,6 +102,43 @@ describe("review renderer", () => {
     expect(output).not.toContain("<summary>Low-severity");
   });
 
+  it("renders a compact Linked requirements section with unmet requirements", () => {
+    const output = renderReview(
+      { summary: "Mostly good.", verdict: "comment", findings: [] },
+      {
+        ...metadata,
+        linkedIssues: [
+          {
+            issueNumber: 12,
+            title: "Add rate limiting",
+            status: "addressed",
+            rationale: "Per-IP limiter is present on the auth route.",
+            unmetRequirements: [],
+          },
+          {
+            issueNumber: 15,
+            title: "Validate email",
+            status: "not_addressed",
+            rationale: "Email format is still unchecked.",
+            unmetRequirements: ["Reject invalid email addresses"],
+          },
+          {
+            issueNumber: 20,
+            status: "unclear",
+            rationale: "Issue content was inaccessible.",
+            unmetRequirements: [],
+          },
+        ],
+      },
+    );
+
+    expect(output).toContain("## Linked requirements");
+    expect(output).toContain("**#12 · Add rate limiting** — Addressed:");
+    expect(output).toContain("**#15 · Validate email** — Not addressed:");
+    expect(output).toContain("- Reject invalid email addresses");
+    expect(output).toContain("**#20** — Unclear:");
+  });
+
   it("renders a concise positive zero-findings review", () => {
     const output = renderReview(
       { summary: "No actionable issues were found.", verdict: "approve", findings: [] },

@@ -19,4 +19,9 @@ export const ADJUDICATION_OUTPUT_TOKEN_BUDGET = 4_000;
 export const INLINE_COMMENT_CAP = 8;
 export const INLINE_SUGGESTION_MAX_LINES = 20;
 export const INLINE_SUGGESTION_MAX_CHARS = 4_000;
+/** Max same-repo closing references assessed per review (Feature 29). */
+export const MAX_LINKED_ISSUES = 3;
+/** Bounded issue title/body supplied to the model (chars, not tokens). */
+export const LINKED_ISSUE_TITLE_CHAR_LIMIT = 500;
+export const LINKED_ISSUE_BODY_CHAR_LIMIT = 4_000;
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

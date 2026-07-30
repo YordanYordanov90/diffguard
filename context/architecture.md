@@ -127,6 +127,16 @@
   failed reply, and accepted reply ids are persisted for retry recovery. The
   head is rechecked before durable reconciliation writes and again before
   summary publication.
+- Feature 29 parses only explicit PR-body closing references (`fixes` /
+  `closes` / `resolves` + `#N` or same-repo issue URL), caps at three
+  same-repository issues, and fetches each issue title/body in memory via the
+  installation token. Missing `Issues: read`, private/inaccessible issues, and
+  PR-as-issue references soft-fail to `unclear` so ordinary code review still
+  completes. Issue text is bounded, delimited untrusted product context;
+  assessments (`addressed` | `not_addressed` | `unclear`) are advisory only,
+  allowlist-validated, rendered under **Linked requirements**, and persisted
+  with minimal metadata (number, title, status, rationale, unmet list) — never
+  the full issue body.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
