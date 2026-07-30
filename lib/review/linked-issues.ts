@@ -26,11 +26,12 @@ const HASH_REF = new RegExp(
 );
 
 /**
- * `Fixes https://github.com/owner/repo/issues/12` (optional www, optional
- * trailing slash/query/fragment). Cross-repo URLs are filtered by owner/repo.
+ * `Fixes https://github.com/owner/repo/issues/12` (optional www, safe
+ * Markdown/autolink wrapper, trailing slash/query/fragment). Cross-repo URLs
+ * are filtered by owner/repo.
  */
 const URL_REF = new RegExp(
-  `\\b${CLOSING_KEYWORD}\\s+https?://(?:www\\.)?github\\.com/([^/\\s]+)/([^/\\s]+)/issues/(\\d+)(?:[/?#][^\\s]*)?`,
+  `\\b${CLOSING_KEYWORD}\\s+(?:[<(])?https?://(?:www\\.)?github\\.com/([^/\\s]+)/([^/\\s]+)/issues/(\\d+)\\b(?:[/?#][^\\s>]*)?`,
   "gi",
 );
 
