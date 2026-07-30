@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 
 import { db as defaultDb } from "./client";
 import {
@@ -716,7 +716,10 @@ function buildFindingUpsert(
       setWhere: and(
         eq(reviewFindings.installationId, input.installationId),
         reopenResolved
-          ? ne(reviewFindings.status, "dismissed")
+          ? or(
+              eq(reviewFindings.status, "open"),
+              eq(reviewFindings.status, "resolved"),
+            )
           : eq(reviewFindings.status, "open"),
       ),
     })
@@ -946,11 +949,30 @@ export async function reconcileFindings(
       )
       .returning()
     : null;
-  const queries = resolvedQuery ? [...findingQueries, resolvedQuery] : findingQueries;
-  if (queries.length === 0) return { findings: [], resolved: [] };
+  const [firstFindingQuery, ...remainingFindingQueries] = findingQueries;
+  if (!firstFindingQuery && !resolvedQuery) return { findings: [], resolved: [] };
 
-  const results = await database.batch(queries);
-  const findingResults = results.slice(0, findingQueries.length).flat();
-  const resolved = resolvedQuery ? results.at(-1) ?? [] : [];
-  return { findings: findingResults, resolved };
+  if (!resolvedQuery) {
+    if (!firstFindingQuery) return { findings: [], resolved: [] };
+    const results = await database.batch([
+      firstFindingQuery,
+      ...remainingFindingQueries,
+    ]);
+    return { findings: results.flat(), resolved: [] };
+  }
+
+  if (!firstFindingQuery) {
+    const results = await database.batch([resolvedQuery]);
+    return { findings: [], resolved: results[0] ?? [] };
+  }
+
+  const results = await database.batch([
+    firstFindingQuery,
+    ...remainingFindingQueries,
+    resolvedQuery,
+  ]);
+  return {
+    findings: results.slice(0, findingQueries.length).flat(),
+    resolved: results.at(-1) ?? [],
+  };
 }

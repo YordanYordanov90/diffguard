@@ -95,6 +95,10 @@ const pullRequestReviewCommentSchema = z.object({
   body: z.string(),
 });
 
+const pullRequestReviewCommentScopeSchema = z.object({
+  pull_request_url: z.string().url(),
+});
+
 export type PullRequestReviewCommentInput = {
   path: string;
   body: string;
@@ -150,6 +154,24 @@ function parseRepositoryName(fullName: string) {
   }
 
   return { owner, repo };
+}
+
+function isPullRequestReviewCommentInScope(
+  pullRequestUrl: string,
+  owner: string,
+  repo: string,
+  prNumber: number,
+) {
+  try {
+    const parsed = new URL(pullRequestUrl);
+    return (
+      parsed.hostname === "api.github.com" &&
+      parsed.pathname.toLowerCase() ===
+        `/repos/${owner}/${repo}/pulls/${prNumber}`.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isNotFound(error: unknown) {
@@ -509,16 +531,45 @@ export function createGitHubClient(
       const { owner, repo } = parseRepositoryName(repoFullName);
       const octokit = await getInstallationClient(dependencies, installationId);
       const response = await octokit.request(
-        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies",
         {
           owner,
           repo,
           pull_number: prNumber,
           body,
-          in_reply_to: parentCommentId,
+          comment_id: parentCommentId,
         },
       );
       return z.object({ id: z.number().int().positive() }).parse(response.data).id;
+    },
+
+    /** Verify that a stored inline comment belongs to this exact repository and PR. */
+    async verifyPullRequestReviewCommentScope(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      commentId: number,
+    ) {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+          { owner, repo, comment_id: commentId },
+        );
+        const parsed = pullRequestReviewCommentScopeSchema.safeParse(response.data);
+        return (
+          parsed.success &&
+          isPullRequestReviewCommentInScope(
+            parsed.data.pull_request_url,
+            owner,
+            repo,
+            prNumber,
+          )
+        );
+      } catch {
+        return false;
+      }
     },
 
     /** Submit one COMMENT review at the exact head SHA. */
@@ -652,6 +703,9 @@ export const githubClient = {
   replyToPullRequestReviewComment: (
     ...args: Parameters<GitHubClient["replyToPullRequestReviewComment"]>
   ) => getDefaultClient().replyToPullRequestReviewComment(...args),
+  verifyPullRequestReviewCommentScope: (
+    ...args: Parameters<GitHubClient["verifyPullRequestReviewCommentScope"]>
+  ) => getDefaultClient().verifyPullRequestReviewCommentScope(...args),
   createPullRequestReview: (
     ...args: Parameters<GitHubClient["createPullRequestReview"]>
   ) => getDefaultClient().createPullRequestReview(...args),
@@ -674,6 +728,7 @@ export const {
   fetchRepositoryTree,
   upsertComment,
   replyToPullRequestReviewComment,
+  verifyPullRequestReviewCommentScope,
   createPullRequestReview,
   listPullRequestReviewComments,
   getUserInstallations,

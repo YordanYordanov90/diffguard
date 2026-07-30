@@ -39,6 +39,7 @@ import {
   fetchRepositoryTree,
   isCommitOnPullRequest,
   replyToPullRequestReviewComment,
+  verifyPullRequestReviewCommentScope,
   upsertComment,
   type CommitComparisonResult,
   listPullRequestReviewComments,
@@ -149,6 +150,7 @@ type GitHubClient = {
   createPullRequestReview: typeof createPullRequestReview;
   listPullRequestReviewComments: typeof listPullRequestReviewComments;
   replyToPullRequestReviewComment: typeof replyToPullRequestReviewComment;
+  verifyPullRequestReviewCommentScope: typeof verifyPullRequestReviewCommentScope;
 };
 
 type QStashVerifier = {
@@ -251,6 +253,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       createPullRequestReview,
       listPullRequestReviewComments,
       replyToPullRequestReviewComment,
+      verifyPullRequestReviewCommentScope,
     },
     generateReview,
     adjudicateReview,
@@ -973,6 +976,13 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     });
     for (const finding of reconciliation.resolved) {
       if (finding.githubCommentId === null || finding.resolutionRepliedAt !== null) continue;
+      const commentIsInScope = await dependencies.github.verifyPullRequestReviewCommentScope(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+        finding.githubCommentId,
+      );
+      if (!commentIsInScope) continue;
       try {
         await dependencies.github.replyToPullRequestReviewComment(
           job.installationId,

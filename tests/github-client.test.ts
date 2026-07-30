@@ -39,6 +39,13 @@ function createMockClient(
         ],
       });
     }
+    if (route.includes("/pulls/comments/") && route.startsWith("GET")) {
+      return Promise.resolve({
+        data: {
+          pull_request_url: "https://api.github.com/repos/owner/repo/pulls/7",
+        },
+      });
+    }
     if (route.includes("/pulls/") && route.endsWith("/reviews") && route.startsWith("POST")) {
       return Promise.resolve({ data: { id: 6001 } });
     }
@@ -358,15 +365,36 @@ describe("GitHub client", () => {
       client.replyToPullRequestReviewComment(42, "owner/repo", 7, 7001, "Resolved."),
     ).resolves.toBe(501);
     expect(request).toHaveBeenCalledWith(
-      "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies",
       {
         owner: "owner",
         repo: "repo",
         pull_number: 7,
         body: "Resolved.",
-        in_reply_to: 7001,
+        comment_id: 7001,
       },
     );
+  });
+
+  it("verifies that an inline comment belongs to the requested PR", async () => {
+    const { client, request } = createMockClient();
+
+    await expect(
+      client.verifyPullRequestReviewCommentScope(42, "owner/repo", 7, 7001),
+    ).resolves.toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/pulls/comments/{comment_id}",
+      { owner: "owner", repo: "repo", comment_id: 7001 },
+    );
+
+    request.mockResolvedValueOnce({
+      data: {
+        pull_request_url: "https://api.github.com/repos/owner/repo/pulls/8",
+      },
+    });
+    await expect(
+      client.verifyPullRequestReviewCommentScope(42, "owner/repo", 7, 7002),
+    ).resolves.toBe(false);
   });
 
   it("submits one COMMENT review and retrieves its comment ids separately", async () => {

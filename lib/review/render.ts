@@ -18,6 +18,8 @@ export type RenderMetadata = {
   };
 };
 
+type ReconciliationMetadata = NonNullable<RenderMetadata["reconciliation"]>;
+
 const severityRank: Record<Severity, number> = {
   critical: 0,
   high: 1,
@@ -93,7 +95,7 @@ function renderSkippedFiles(skippedFiles: string[]): string {
 
 export function renderReview(review: ReviewOutput, metadata: RenderMetadata): string {
   if (metadata.reconciliation) {
-    return renderReconciledReview(review, metadata);
+    return renderReconciledReview(review, metadata, metadata.reconciliation);
   }
   const visibleFindings = review.findings.filter((finding) => !isCollapsedSeverity(finding));
   const collapsedFindings = review.findings.filter(isCollapsedSeverity);
@@ -141,8 +143,11 @@ export function renderReview(review: ReviewOutput, metadata: RenderMetadata): st
   return sections.join("\n");
 }
 
-function renderReconciledReview(review: ReviewOutput, metadata: RenderMetadata): string {
-  const reconciliation = metadata.reconciliation;
+function renderReconciledReview(
+  review: ReviewOutput,
+  metadata: RenderMetadata,
+  reconciliation: ReconciliationMetadata,
+): string {
   const sections = [
     "### 🛡️ DiffGuard Review",
     "",
