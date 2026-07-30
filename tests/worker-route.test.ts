@@ -77,6 +77,7 @@ function createDependencies(
       createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 1 }),
       listPullRequestReviewComments: vi.fn().mockResolvedValue([]),
       replyToPullRequestReviewComment: vi.fn().mockResolvedValue(7002),
+      verifyPullRequestReviewCommentScope: vi.fn().mockResolvedValue(true),
       ...githubOverrides,
     },
     generateReview: vi.fn().mockResolvedValue({
@@ -399,6 +400,12 @@ describe("review worker route", () => {
       7,
       7001,
       expect.stringContaining("resolved"),
+    );
+    expect(dependencies.github.verifyPullRequestReviewCommentScope).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      7001,
     );
     expect(dependencies.queries.markFindingResolutionReplied).toHaveBeenCalledWith(
       42,

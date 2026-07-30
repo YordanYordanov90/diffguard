@@ -4,6 +4,7 @@ vi.mock("@/lib/db/client", () => ({ db: {} }));
 
 import {
   type FindingUpsertInput,
+  reconcileFindings,
   upsertConfirmedFindings,
 } from "@/lib/db/queries";
 
@@ -67,5 +68,24 @@ describe("confirmed finding persistence", () => {
       { query: "second" },
     ]);
     expect(results).toEqual([{ id: "finding-1" }, { id: "finding-2" }]);
+  });
+
+  it("keeps a dismissed finding terminal when matching evidence returns", async () => {
+    const { database, batch } = createDatabase();
+    batch.mockResolvedValueOnce([[]]);
+
+    await expect(
+      reconcileFindings(
+        {
+          installationId: baseFinding.installationId,
+          repositoryId: baseFinding.repositoryId,
+          prNumber: baseFinding.prNumber,
+          headSha: baseFinding.headSha,
+          findingInputs: [baseFinding],
+          resolvedFindingIds: [],
+        },
+        database,
+      ),
+    ).resolves.toEqual({ findings: [], resolved: [] });
   });
 });
