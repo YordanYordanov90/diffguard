@@ -148,6 +148,8 @@ export function createReviewTriggerHandler(
       prBody: event.pull_request.body,
       headSha: event.pull_request.head.sha,
       deliveryId,
+      // Webhooks never force a full review; Feature 34 sets this internally.
+      forceFullReview: false,
     };
     const skipReason = getSkipReason(event);
     if (skipReason) {

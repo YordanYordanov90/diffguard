@@ -87,7 +87,27 @@ describe("review boundary schemas", () => {
         headSha: sha,
         deliveryId: "delivery-1",
       }),
-    ).toMatchObject({ installationId: 42, headSha: sha });
+    ).toMatchObject({
+      installationId: 42,
+      headSha: sha,
+      forceFullReview: false,
+    });
+  });
+
+  it("accepts the internal forceFullReview override on review jobs", () => {
+    expect(
+      reviewJobSchema.parse({
+        installationId: 42,
+        repositoryId: 100,
+        repoFullName: "owner/repo",
+        prNumber: 7,
+        prTitle: "Update dependency",
+        prBody: null,
+        headSha: sha,
+        deliveryId: "delivery-2",
+        forceFullReview: true,
+      }),
+    ).toMatchObject({ forceFullReview: true });
   });
 
   it("rejects unsupported LLM enum values", () => {

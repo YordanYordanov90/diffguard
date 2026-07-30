@@ -1,13 +1,24 @@
+import type { ReviewMode } from "./baseline";
 import type { Finding, ReviewOutput, Severity } from "./schema";
 
 export type RenderMetadata = {
   filesReviewed: number;
   skippedFiles: string[];
   headSha: string;
+  reviewMode?: ReviewMode;
+  comparedFromSha?: string | null;
   /** When set and > 0, disclose that some findings have no inline comment. */
   summaryOnlyFindingCount?: number;
   inlineCommentCount?: number;
+  reconciliation?: {
+    newFindings: Finding[];
+    recurringFindings: Finding[];
+    stillOpenFindings: Finding[];
+    resolvedFindings: Finding[];
+  };
 };
+
+type ReconciliationMetadata = NonNullable<RenderMetadata["reconciliation"]>;
 
 const severityRank: Record<Severity, number> = {
   critical: 0,
@@ -83,6 +94,9 @@ function renderSkippedFiles(skippedFiles: string[]): string {
 }
 
 export function renderReview(review: ReviewOutput, metadata: RenderMetadata): string {
+  if (metadata.reconciliation) {
+    return renderReconciledReview(review, metadata, metadata.reconciliation);
+  }
   const visibleFindings = review.findings.filter((finding) => !isCollapsedSeverity(finding));
   const collapsedFindings = review.findings.filter(isCollapsedSeverity);
   const securityFindings = visibleFindings.filter((finding) => finding.category === "security");
@@ -125,6 +139,54 @@ export function renderReview(review: ReviewOutput, metadata: RenderMetadata): st
 
   const skippedFiles = renderSkippedFiles(metadata.skippedFiles);
   if (skippedFiles) sections.push("", skippedFiles);
-  sections.push("", "---", `🛡️ DiffGuard · reviewed commit \`${metadata.headSha.slice(0, 7)}\``);
+  sections.push("", "---", renderFooter(metadata));
   return sections.join("\n");
+}
+
+function renderReconciledReview(
+  review: ReviewOutput,
+  metadata: RenderMetadata,
+  reconciliation: ReconciliationMetadata,
+): string {
+  const sections = [
+    "### 🛡️ DiffGuard Review",
+    "",
+    renderSummary(review, metadata.filesReviewed),
+    "",
+    `> ${review.summary}`,
+  ];
+  if (reconciliation.newFindings.length > 0) {
+    sections.push("", "## New findings", "", renderFindings(reconciliation.newFindings));
+  }
+  if (reconciliation.recurringFindings.length > 0) {
+    sections.push("", "## Recurring findings", "", renderFindings(reconciliation.recurringFindings));
+  }
+  if (reconciliation.stillOpenFindings.length > 0) {
+    sections.push("", "## Still open", "", renderFindings(reconciliation.stillOpenFindings));
+  }
+  if (reconciliation.resolvedFindings.length > 0) {
+    sections.push("", "## Resolved in this update", "", renderFindings(reconciliation.resolvedFindings));
+  }
+  const skippedFiles = renderSkippedFiles(metadata.skippedFiles);
+  if (skippedFiles) sections.push("", skippedFiles);
+  sections.push("", "---", renderFooter(metadata));
+  return sections.join("\n");
+}
+
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+function renderFooter(metadata: RenderMetadata): string {
+  const head = shortSha(metadata.headSha);
+  const mode = metadata.reviewMode ?? "full";
+  const from = metadata.comparedFromSha;
+
+  if (mode === "incremental" && from) {
+    return `🛡️ DiffGuard · reviewed commit \`${head}\` · incremental \`${shortSha(from)}\`…\`${head}\``;
+  }
+  if (mode === "fallback_full") {
+    return `🛡️ DiffGuard · reviewed commit \`${head}\` · full review (fallback)`;
+  }
+  return `🛡️ DiffGuard · reviewed commit \`${head}\` · full review`;
 }

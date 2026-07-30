@@ -11,6 +11,11 @@ export const reviewJobSchema = z.object({
   prBody: z.string().nullable(),
   headSha: shaSchema,
   deliveryId: z.string().min(1),
+  /**
+   * Internal full-review override for Feature 34. Not set by webhooks or
+   * any user-facing path in this increment; defaults to false.
+   */
+  forceFullReview: z.boolean().optional().default(false),
 });
 
 export type ReviewJob = z.infer<typeof reviewJobSchema>;

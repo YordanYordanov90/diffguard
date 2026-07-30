@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
 import { db as defaultDb } from "./client";
 import {
@@ -6,12 +6,14 @@ import {
   repositories,
   reviewFindings,
   reviews,
+  type ReviewMode,
   type FindingLifecycle,
   type SkipReason,
   type StoredSuggestedChange,
 } from "./schema";
 
 type Database = typeof defaultDb;
+const RESOLUTION_REPLY_LEASE_MS = 5 * 60 * 1000;
 
 export type InstallationInput = {
   id: number;
@@ -47,6 +49,8 @@ export type ReviewCompletion = {
   reviewMarkdown: string;
   verdict: "approve" | "comment" | "concerns";
   commentId: number;
+  reviewMode: ReviewMode;
+  comparedFromSha: string | null;
   findingsCritical: number;
   findingsHigh: number;
   findingsMedium: number;
@@ -282,6 +286,38 @@ export async function getLatestReviewCommentId(
     .limit(1);
 
   return review?.commentId ?? null;
+}
+
+/**
+ * Latest completed review for the same tenant, repository, and PR.
+ * Used as the incremental baseline — never accept previous SHA from webhooks.
+ */
+export async function getLatestCompletedReviewForPr(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  database: Database = defaultDb,
+) {
+  const [review] = await database
+    .select({
+      id: reviews.id,
+      headSha: reviews.headSha,
+      commentId: reviews.commentId,
+      updatedAt: reviews.updatedAt,
+    })
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.installationId, installationId),
+        eq(reviews.repositoryId, repositoryId),
+        eq(reviews.prNumber, prNumber),
+        eq(reviews.status, "completed"),
+      ),
+    )
+    .orderBy(desc(reviews.updatedAt))
+    .limit(1);
+
+  return review ?? null;
 }
 
 export async function markReviewRunning(
@@ -618,7 +654,12 @@ async function assertFindingRepository(
   }
 }
 
-function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
+function buildFindingUpsert(
+  input: FindingUpsertInput,
+  database: Database,
+  reopenResolved = false,
+) {
+  const leaseExpiredAt = new Date(Date.now() - RESOLUTION_REPLY_LEASE_MS);
   return database
     .insert(reviewFindings)
     .values({
@@ -651,6 +692,18 @@ function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
         reviewFindings.fingerprint,
       ],
       set: {
+        ...(reopenResolved
+          ? {
+              status: "open" as const,
+              previousResolvedSha: sql`${reviewFindings.resolvedSha}`,
+              previousResolutionRepliedAt: sql`${reviewFindings.resolutionRepliedAt}`,
+              resolvedSha: null,
+              resolutionRepliedAt: null,
+              resolutionReplyClaimedAt: null,
+              resolutionReplyAttemptId: null,
+              resolutionReplyCommentId: null,
+            }
+          : {}),
         confidence: input.confidence,
         severity: input.severity,
         category: input.category,
@@ -669,7 +722,18 @@ function buildFindingUpsert(input: FindingUpsertInput, database: Database) {
       },
       setWhere: and(
         eq(reviewFindings.installationId, input.installationId),
-        eq(reviewFindings.status, "open"),
+        reopenResolved
+          ? or(
+              eq(reviewFindings.status, "open"),
+              and(
+                eq(reviewFindings.status, "resolved"),
+                or(
+                  isNull(reviewFindings.resolutionReplyClaimedAt),
+                  lt(reviewFindings.resolutionReplyClaimedAt, leaseExpiredAt),
+                ),
+              ),
+            )
+          : eq(reviewFindings.status, "open"),
       ),
     })
     .returning();
@@ -768,6 +832,112 @@ export async function attachFindingGitHubCommentId(
   return finding ?? null;
 }
 
+export async function markFindingResolutionReplied(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  findingId: string,
+  resolvedSha: string,
+  attemptId: string,
+  replyCommentId: number,
+  database: Database = defaultDb,
+) {
+  const now = new Date();
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({
+      resolutionRepliedAt: now,
+      resolutionReplyClaimedAt: null,
+      resolutionReplyAttemptId: null,
+      resolutionReplyCommentId: replyCommentId,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "resolved"),
+        eq(reviewFindings.resolvedSha, resolvedSha),
+        eq(reviewFindings.resolutionReplyAttemptId, attemptId),
+        isNull(reviewFindings.resolutionRepliedAt),
+        isNotNull(reviewFindings.resolutionReplyClaimedAt),
+      ),
+    )
+    .returning();
+  return finding ?? null;
+}
+
+export async function claimFindingResolutionReply(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  findingId: string,
+  resolvedSha: string,
+  attemptId: string,
+  database: Database = defaultDb,
+) {
+  const leaseExpiredAt = new Date(Date.now() - RESOLUTION_REPLY_LEASE_MS);
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({
+      resolutionReplyClaimedAt: new Date(),
+      resolutionReplyAttemptId: attemptId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "resolved"),
+        eq(reviewFindings.resolvedSha, resolvedSha),
+        isNull(reviewFindings.resolutionRepliedAt),
+        or(
+          isNull(reviewFindings.resolutionReplyClaimedAt),
+          lt(reviewFindings.resolutionReplyClaimedAt, leaseExpiredAt),
+        ),
+      ),
+    )
+    .returning();
+  return finding ?? null;
+}
+
+export async function releaseFindingResolutionReply(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  findingId: string,
+  resolvedSha: string,
+  attemptId: string,
+  database: Database = defaultDb,
+) {
+  const [finding] = await database
+    .update(reviewFindings)
+    .set({
+      resolutionReplyClaimedAt: null,
+      resolutionReplyAttemptId: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(reviewFindings.id, findingId),
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.status, "resolved"),
+        eq(reviewFindings.resolvedSha, resolvedSha),
+        eq(reviewFindings.resolutionReplyAttemptId, attemptId),
+        isNull(reviewFindings.resolutionRepliedAt),
+        isNotNull(reviewFindings.resolutionReplyClaimedAt),
+      ),
+    )
+    .returning();
+  return finding ?? null;
+}
+
 /**
  * Mark a finding resolved or dismissed. Terminal statuses cannot silently reopen.
  */
@@ -829,4 +999,74 @@ export async function upsertConfirmedFindings(
 
   const results = await database.batch([firstQuery, ...remainingQueries]);
   return results.flat();
+}
+
+export type FindingReconciliationInput = {
+  installationId: number;
+  repositoryId: number;
+  prNumber: number;
+  headSha: string;
+  findingInputs: FindingUpsertInput[];
+  resolvedFindingIds: string[];
+};
+
+/**
+ * Atomically reopen evidence-confirmed findings and resolve only trusted,
+ * tenant/PR-scoped open finding ids. Dismissed findings always remain terminal.
+ */
+export async function reconcileFindings(
+  input: FindingReconciliationInput,
+  database: Database = defaultDb,
+) {
+  const sample = input.findingInputs[0];
+  if (sample) await assertFindingRepository(sample, database);
+
+  const findingQueries = input.findingInputs.map((finding) =>
+    buildFindingUpsert(finding, database, true),
+  );
+  const resolvedQuery = input.resolvedFindingIds.length > 0
+    ? database
+      .update(reviewFindings)
+      .set({
+        status: "resolved",
+        resolvedSha: input.headSha,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(reviewFindings.installationId, input.installationId),
+          eq(reviewFindings.repositoryId, input.repositoryId),
+          eq(reviewFindings.prNumber, input.prNumber),
+          eq(reviewFindings.status, "open"),
+          inArray(reviewFindings.id, input.resolvedFindingIds),
+        ),
+      )
+      .returning()
+    : null;
+  const [firstFindingQuery, ...remainingFindingQueries] = findingQueries;
+  if (!firstFindingQuery && !resolvedQuery) return { findings: [], resolved: [] };
+
+  if (!resolvedQuery) {
+    if (!firstFindingQuery) return { findings: [], resolved: [] };
+    const results = await database.batch([
+      firstFindingQuery,
+      ...remainingFindingQueries,
+    ]);
+    return { findings: results.flat(), resolved: [] };
+  }
+
+  if (!firstFindingQuery) {
+    const results = await database.batch([resolvedQuery]);
+    return { findings: [], resolved: results[0] ?? [] };
+  }
+
+  const results = await database.batch([
+    firstFindingQuery,
+    ...remainingFindingQueries,
+    resolvedQuery,
+  ]);
+  return {
+    findings: results.slice(0, findingQueries.length).flat(),
+    resolved: results.at(-1) ?? [],
+  };
 }

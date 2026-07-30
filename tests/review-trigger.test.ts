@@ -153,6 +153,7 @@ describe("review trigger", () => {
         prBody: null,
         headSha: baseEvent.pull_request.head.sha,
         deliveryId: "delivery-1",
+        forceFullReview: false,
       },
     });
   });

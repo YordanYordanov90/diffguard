@@ -1,4 +1,5 @@
 import { Receiver } from "@upstash/qstash";
+import { randomUUID } from "node:crypto";
 
 import {
   DAILY_REVIEW_CAP,
@@ -12,9 +13,11 @@ import {
 import { parseEnv } from "@/lib/config/env";
 import type {
   attachFindingGitHubCommentId,
+  claimFindingResolutionReply,
   countReviewsToday,
   FindingUpsertInput,
   getInstallationModel,
+  getLatestCompletedReviewForPr,
   getLatestReviewCommentId,
   getReviewBySha,
   markReviewCompleted,
@@ -22,22 +25,39 @@ import type {
   markReviewFailed,
   markReviewRunning,
   markReviewSkipped,
+  listOpenFindingsByPr,
+  markFindingResolutionReplied,
+  releaseFindingResolutionReply,
+  reconcileFindings,
   upsertConfirmedFindings,
 } from "@/lib/db/queries";
 import {
+  fetchCommitComparison,
+  fetchCommitRangeDiff,
   createPullRequestReview,
   fetchInstructionsFile,
   fetchPrDiff,
   fetchPrHeadSha,
   fetchRepositoryFile,
   fetchRepositoryTree,
-  listPullRequestReviewComments,
+  findPullRequestReviewReply,
+  isCommitOnPullRequest,
+  replyToPullRequestReviewComment,
+  verifyPullRequestReviewCommentScope,
   upsertComment,
+  type CommitComparisonResult,
+  listPullRequestReviewComments,
   type CreatedPullRequestReviewComment,
   type CreatePullRequestReviewResult,
   type PullRequestReviewCommentInput,
   type RepositoryTreeResult,
 } from "@/lib/github/client";
+import {
+  planReviewBaseline,
+  type BaselinePlan,
+  type CommitComparison,
+  type ReviewMode,
+} from "@/lib/review/baseline";
 import { processDiff } from "@/lib/review/diff";
 import {
   adjudicateReview,
@@ -60,6 +80,12 @@ import {
 } from "@/lib/review/evidence";
 import { toPersistableFindings } from "@/lib/review/fingerprint";
 import {
+  selectEligibleFindings,
+  selectResolvedFindingIds,
+  toFinding as toReconciledFinding,
+  type OpenFinding,
+} from "@/lib/review/reconciliation";
+import {
   planInlineComments,
   stripInlineSuggestions,
   type PreparedInlineComment,
@@ -71,12 +97,15 @@ import {
   adjudicationOutputSchema,
   type ConfirmedFinding,
   type FindingCandidate,
+  type FindingUpdate,
   type ReviewOutput,
 } from "@/lib/review/schema";
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
+type CompletedBaseline = Awaited<ReturnType<typeof getLatestCompletedReviewForPr>>;
 type StoredFinding = Awaited<ReturnType<typeof upsertConfirmedFindings>>[number];
+type StoredOpenFinding = Awaited<ReturnType<typeof listOpenFindingsByPr>>[number];
 type PublishedInlineReview = CreatePullRequestReviewResult & {
   comments: CreatedPullRequestReviewComment[];
 };
@@ -85,6 +114,9 @@ type ReviewQueries = {
   getReviewBySha: (...args: Parameters<typeof getReviewBySha>) => Promise<StoredReview>;
   getInstallationModel: (...args: Parameters<typeof getInstallationModel>) => Promise<string | null>;
   getLatestReviewCommentId: (...args: Parameters<typeof getLatestReviewCommentId>) => Promise<number | null>;
+  getLatestCompletedReviewForPr: (
+    ...args: Parameters<typeof getLatestCompletedReviewForPr>
+  ) => Promise<CompletedBaseline>;
   countReviewsToday: (...args: Parameters<typeof countReviewsToday>) => Promise<number>;
   markReviewSkipped: (...args: Parameters<typeof markReviewSkipped>) => Promise<unknown>;
   markReviewRunning: (...args: Parameters<typeof markReviewRunning>) => Promise<StoredReview>;
@@ -97,17 +129,39 @@ type ReviewQueries = {
   attachFindingGitHubCommentId: (
     ...args: Parameters<typeof attachFindingGitHubCommentId>
   ) => Promise<unknown>;
+  listOpenFindingsByPr: (
+    ...args: Parameters<typeof listOpenFindingsByPr>
+  ) => Promise<StoredOpenFinding[]>;
+  reconcileFindings: (...args: Parameters<typeof reconcileFindings>) => Promise<{
+    findings: StoredFinding[];
+    resolved: StoredOpenFinding[];
+  }>;
+  markFindingResolutionReplied: (
+    ...args: Parameters<typeof markFindingResolutionReplied>
+  ) => Promise<unknown>;
+  claimFindingResolutionReply: (
+    ...args: Parameters<typeof claimFindingResolutionReply>
+  ) => Promise<StoredOpenFinding | null>;
+  releaseFindingResolutionReply: (
+    ...args: Parameters<typeof releaseFindingResolutionReply>
+  ) => Promise<unknown>;
 };
 
 type GitHubClient = {
   fetchPrHeadSha: typeof fetchPrHeadSha;
   fetchPrDiff: typeof fetchPrDiff;
+  fetchCommitComparison: typeof fetchCommitComparison;
+  fetchCommitRangeDiff: typeof fetchCommitRangeDiff;
+  isCommitOnPullRequest: typeof isCommitOnPullRequest;
   fetchInstructionsFile: typeof fetchInstructionsFile;
   fetchRepositoryFile: typeof fetchRepositoryFile;
   fetchRepositoryTree: typeof fetchRepositoryTree;
   upsertComment: typeof upsertComment;
   createPullRequestReview: typeof createPullRequestReview;
   listPullRequestReviewComments: typeof listPullRequestReviewComments;
+  replyToPullRequestReviewComment: typeof replyToPullRequestReviewComment;
+  verifyPullRequestReviewCommentScope: typeof verifyPullRequestReviewCommentScope;
+  findPullRequestReviewReply: typeof findPullRequestReviewReply;
 };
 
 type QStashVerifier = {
@@ -148,6 +202,10 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         const { getLatestReviewCommentId } = await import("@/lib/db/queries");
         return getLatestReviewCommentId(...args);
       },
+      async getLatestCompletedReviewForPr(...args) {
+        const { getLatestCompletedReviewForPr } = await import("@/lib/db/queries");
+        return getLatestCompletedReviewForPr(...args);
+      },
       async countReviewsToday(...args) {
         const { countReviewsToday } = await import("@/lib/db/queries");
         return countReviewsToday(...args);
@@ -180,16 +238,42 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
         const { attachFindingGitHubCommentId } = await import("@/lib/db/queries");
         return attachFindingGitHubCommentId(...args);
       },
+      async listOpenFindingsByPr(...args) {
+        const { listOpenFindingsByPr } = await import("@/lib/db/queries");
+        return listOpenFindingsByPr(...args);
+      },
+      async reconcileFindings(...args) {
+        const { reconcileFindings } = await import("@/lib/db/queries");
+        return reconcileFindings(...args);
+      },
+      async markFindingResolutionReplied(...args) {
+        const { markFindingResolutionReplied } = await import("@/lib/db/queries");
+        return markFindingResolutionReplied(...args);
+      },
+      async claimFindingResolutionReply(...args) {
+        const { claimFindingResolutionReply } = await import("@/lib/db/queries");
+        return claimFindingResolutionReply(...args);
+      },
+      async releaseFindingResolutionReply(...args) {
+        const { releaseFindingResolutionReply } = await import("@/lib/db/queries");
+        return releaseFindingResolutionReply(...args);
+      },
     },
     github: {
       fetchPrHeadSha,
       fetchPrDiff,
+      fetchCommitComparison,
+      fetchCommitRangeDiff,
+      isCommitOnPullRequest,
       fetchInstructionsFile,
       fetchRepositoryFile,
       fetchRepositoryTree,
       upsertComment,
       createPullRequestReview,
       listPullRequestReviewComments,
+      replyToPullRequestReviewComment,
+      verifyPullRequestReviewCommentScope,
+      findPullRequestReviewReply,
     },
     generateReview,
     adjudicateReview,
@@ -322,20 +406,47 @@ function severityCounts(review: ReviewOutput) {
   );
 }
 
-function candidateFindings(output: unknown): FindingCandidate[] {
+function parseCandidateOutput(output: unknown): {
+  candidates: FindingCandidate[];
+  findingUpdates: FindingUpdate[];
+} {
   const candidateOutput = candidateReviewOutputSchema.safeParse(output);
-  if (candidateOutput.success) return candidateOutput.data.candidates;
+  if (candidateOutput.success) return candidateOutput.data;
   const legacyOutput = reviewOutputSchema.safeParse(output);
-  if (!legacyOutput.success) return [];
-  return legacyOutput.data.findings.map((finding) => ({
-    ...finding,
-    confidence: "high" as const,
-    observedBehavior: "",
-    causalPath: "",
-    violatedInvariant: "",
-    requiresRuntimeVerification: false,
-    suggestedChange: null,
-  }));
+  if (!legacyOutput.success) return { candidates: [], findingUpdates: [] };
+  return {
+    candidates: legacyOutput.data.findings.map((finding) => ({
+      ...finding,
+      confidence: "high" as const,
+      observedBehavior: "",
+      causalPath: "",
+      violatedInvariant: "",
+      requiresRuntimeVerification: false,
+      suggestedChange: null,
+    })),
+    findingUpdates: [],
+  };
+}
+
+function toOpenFinding(finding: StoredOpenFinding): OpenFinding {
+  return {
+    id: finding.id,
+    file: finding.file,
+    line: finding.line,
+    title: finding.title,
+    detail: finding.detail,
+    severity: finding.severity,
+    category: finding.category,
+    suggestion: finding.suggestion,
+  };
+}
+
+function resolutionReplyMarker(findingId: string, headSha: string): string {
+  return `<!-- diffguard-resolution:${findingId}:${headSha} -->`;
+}
+
+function resolutionReplyBody(findingId: string, headSha: string): string {
+  return `✅ DiffGuard marked this finding resolved in \`${headSha.slice(0, 7)}\`.\n\n${resolutionReplyMarker(findingId, headSha)}`;
 }
 
 function addUsage(
@@ -386,6 +497,135 @@ function fetchRepositoryTreeWithinDeadline(
   });
 }
 
+function toCommitComparison(
+  result: CommitComparisonResult,
+  commitInPullRequest: boolean,
+): CommitComparison {
+  if (result.status === "unavailable") {
+    return {
+      status: "diverged",
+      aheadBy: 0,
+      behindBy: 0,
+      truncated: false,
+      baseUnavailable: true,
+      commitInPullRequest: false,
+    };
+  }
+  return {
+    status: result.comparisonStatus,
+    aheadBy: result.aheadBy,
+    behindBy: result.behindBy,
+    truncated: result.truncated,
+    baseUnavailable: false,
+    commitInPullRequest,
+  };
+}
+
+type DiffSelection = {
+  plan: BaselinePlan;
+  rawDiff: string;
+};
+
+/**
+ * Resolve which diff to review. Previous SHAs come only from completed
+ * review rows; comparison uses server-validated SHAs inside the authorized repo.
+ */
+async function selectReviewDiff(
+  job: ReviewJob,
+  dependencies: ReviewWorkerDependencies,
+): Promise<DiffSelection> {
+  const forceFullReview = job.forceFullReview === true;
+
+  if (forceFullReview) {
+    const plan = planReviewBaseline({
+      forceFullReview: true,
+      previousHeadSha: null,
+      currentHeadSha: job.headSha,
+      comparison: null,
+    });
+    const rawDiff = await dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    return { plan, rawDiff };
+  }
+
+  const previous = await dependencies.queries.getLatestCompletedReviewForPr(
+    job.installationId,
+    job.repositoryId,
+    job.prNumber,
+  );
+
+  if (!previous) {
+    const plan = planReviewBaseline({
+      forceFullReview: false,
+      previousHeadSha: null,
+      currentHeadSha: job.headSha,
+      comparison: null,
+    });
+    const rawDiff = await dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    return { plan, rawDiff };
+  }
+
+  const [comparisonResult, commitInPullRequest] = await Promise.all([
+    dependencies.github.fetchCommitComparison(
+      job.installationId,
+      job.repoFullName,
+      previous.headSha,
+      job.headSha,
+    ),
+    dependencies.github.isCommitOnPullRequest(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      previous.headSha,
+    ),
+  ]);
+
+  const plan = planReviewBaseline({
+    forceFullReview: false,
+    previousHeadSha: previous.headSha,
+    currentHeadSha: job.headSha,
+    comparison: toCommitComparison(comparisonResult, commitInPullRequest),
+  });
+
+  if (plan.useIncrementalDiff && plan.comparedFromSha) {
+    const rangeDiff = await dependencies.github.fetchCommitRangeDiff(
+      job.installationId,
+      job.repoFullName,
+      plan.comparedFromSha,
+      job.headSha,
+    );
+    if (rangeDiff !== null) {
+      return { plan, rawDiff: rangeDiff };
+    }
+    // Range fetch failed after a trusted plan — broaden to full PR diff.
+    const fallbackPlan: BaselinePlan = {
+      mode: "fallback_full",
+      comparedFromSha: previous.headSha,
+      useIncrementalDiff: false,
+    };
+    const rawDiff = await dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    return { plan: fallbackPlan, rawDiff };
+  }
+
+  const rawDiff = await dependencies.github.fetchPrDiff(
+    job.installationId,
+    job.repoFullName,
+    job.prNumber,
+  );
+  return { plan, rawDiff };
+}
+
 async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies) {
   const review = await dependencies.queries.getReviewBySha(
     job.installationId,
@@ -420,9 +660,9 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
   const reviewStartedAt = Date.now();
   const llmDeadline = reviewStartedAt + LLM_TIMEOUT_MS;
   try {
-    const [model, rawDiff, instructions] = await Promise.all([
+    const [{ plan, rawDiff }, model, instructions] = await Promise.all([
+      selectReviewDiff(job, dependencies),
       dependencies.queries.getInstallationModel(job.installationId),
-      dependencies.github.fetchPrDiff(job.installationId, job.repoFullName, job.prNumber),
       dependencies.github.fetchInstructionsFile(
         job.installationId,
         job.repoFullName,
@@ -431,7 +671,19 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     ]);
     if (!model) throw new Error("Installation model configuration is missing.");
 
+    const reviewMode: ReviewMode = plan.mode;
     const processedDiff = processDiff(rawDiff);
+    const openFindings = reviewMode === "incremental"
+      ? await dependencies.queries.listOpenFindingsByPr(
+        job.installationId,
+        job.repositoryId,
+        job.prNumber,
+      )
+      : [];
+    const eligibleOpenFindings = selectEligibleFindings(
+      openFindings.map(toOpenFinding),
+      processedDiff.files,
+    );
     const promptContext = {
       prTitle: job.prTitle,
       prBody: job.prBody,
@@ -439,6 +691,13 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       diff: processedDiff.diff,
       instructions,
       skippedFiles: processedDiff.skippedFiles,
+      reconciliationFindings: eligibleOpenFindings.map((finding) => ({
+        id: finding.id,
+        file: finding.file,
+        line: finding.line,
+        title: finding.title,
+        detail: finding.detail.slice(0, 1_000),
+      })),
     };
     const basePrompt = buildReviewPrompt({
       ...promptContext,
@@ -493,7 +752,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     );
     const prompt = buildReviewPrompt({ ...promptContext, ...fittedContext });
     const generated = await dependencies.generateReview(prompt, { model }, { deadline: llmDeadline });
-    const generatedCandidates = candidateFindings(generated.output);
+    const generatedOutput = parseCandidateOutput(generated.output);
+    const generatedCandidates = generatedOutput.candidates;
     const prepared = prepareCandidates(generatedCandidates, processedDiff.files);
     let gatedReview = emptyGatedReview();
     let confirmedFindings: ConfirmedFinding[] = [];
@@ -549,9 +809,28 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       confirmedFindings,
       processedDiff.files,
     );
-    let storedFindings: StoredFinding[] = [];
-    if (persistableFindings.length > 0) {
-      const findingInputs: FindingUpsertInput[] = persistableFindings.map((finding) => ({
+    const reconfirmedFingerprints = new Set(
+      persistableFindings.map((finding) => finding.fingerprint),
+    );
+    const reconfirmedFindingIds = new Set(
+      openFindings
+        .filter((finding) => reconfirmedFingerprints.has(finding.fingerprint))
+        .map((finding) => finding.id),
+    );
+    const resolvedFindingIds = selectResolvedFindingIds(
+      generatedOutput.findingUpdates,
+      eligibleOpenFindings,
+    ).filter((id) => !reconfirmedFindingIds.has(id));
+    const persistenceHeadSha = await dependencies.github.fetchPrHeadSha(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    if (persistenceHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
+      await dependencies.queries.markReviewSkipped(job.installationId, review.id, "stale_sha");
+      return { status: "stale_sha" as const };
+    }
+    const findingInputs: FindingUpsertInput[] = persistableFindings.map((finding) => ({
         installationId: job.installationId,
         repositoryId: job.repositoryId,
         prNumber: job.prNumber,
@@ -571,8 +850,17 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         reviewId: review.id,
         headSha: job.headSha,
       }));
-      storedFindings = await dependencies.queries.upsertConfirmedFindings(findingInputs);
-    }
+    const reconciliation = findingInputs.length > 0 || resolvedFindingIds.length > 0
+      ? await dependencies.queries.reconcileFindings({
+        installationId: job.installationId,
+        repositoryId: job.repositoryId,
+        prNumber: job.prNumber,
+        headSha: job.headSha,
+        findingInputs,
+        resolvedFindingIds,
+      })
+      : { findings: [], resolved: [] };
+    const storedFindings = reconciliation.findings;
 
     const inlinePlan = planInlineComments(
       storedFindings.map((finding) => ({
@@ -592,14 +880,19 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       processedDiff.files,
     );
 
-    const latestHeadSha = await dependencies.github.fetchPrHeadSha(
-      job.installationId,
-      job.repoFullName,
-      job.prNumber,
-    );
-    const publishedInline = latestHeadSha.toLowerCase() === job.headSha.toLowerCase()
-      ? await publishInlineReview(dependencies, job, inlinePlan.comments)
-      : null;
+    let publishedInline: PublishedInlineReview | null = null;
+    if (inlinePlan.comments.length > 0) {
+      const latestHeadSha = await dependencies.github.fetchPrHeadSha(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+      );
+      if (latestHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
+        await dependencies.queries.markReviewSkipped(job.installationId, review.id, "stale_sha");
+        return { status: "stale_sha" as const };
+      }
+      publishedInline = await publishInlineReview(dependencies, job, inlinePlan.comments);
+    }
     const attachedFindingIds = new Set<string>();
     if (publishedInline) {
       const matches = matchPublishedCommentIds(inlinePlan.comments, publishedInline);
@@ -627,14 +920,48 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       (finding) => !findingsWithInline.has(finding.id),
     ).length;
     const attachedInlineCount = attachedFindingIds.size;
+    const resolvedFindingIdSet = new Set(reconciliation.resolved.map((finding) => finding.id));
+    const openFindingIds = new Set(openFindings.map((finding) => finding.id));
+    const reconciliationMetadata = reviewMode === "incremental"
+      ? {
+        newFindings: storedFindings
+          .filter((finding) => finding.introducedReviewId === review.id)
+          .map(toReconciledFinding),
+        recurringFindings: storedFindings
+          .filter(
+            (finding) =>
+              finding.introducedReviewId !== review.id && !openFindingIds.has(finding.id),
+          )
+          .map(toReconciledFinding),
+        stillOpenFindings: openFindings
+          .filter((finding) => !resolvedFindingIdSet.has(finding.id))
+          .map(toReconciledFinding),
+        resolvedFindings: reconciliation.resolved.map(toReconciledFinding),
+      }
+      : undefined;
 
     const markdown = renderReview(gatedReview, {
       filesReviewed: processedDiff.files.length,
       skippedFiles: processedDiff.skippedFiles,
       headSha: job.headSha,
+      reviewMode,
+      comparedFromSha: plan.comparedFromSha,
       summaryOnlyFindingCount,
       inlineCommentCount: attachedInlineCount,
+      reconciliation: reconciliationMetadata,
     });
+
+    // Re-check head immediately before publication (debounce resolution).
+    const publishHeadSha = await dependencies.github.fetchPrHeadSha(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    );
+    if (publishHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
+      await dependencies.queries.markReviewSkipped(job.installationId, review.id, "stale_sha");
+      return { status: "stale_sha" as const };
+    }
+
     const previousCommentId = review.commentId ?? (await dependencies.queries.getLatestReviewCommentId(
       job.installationId,
       job.repositoryId,
@@ -657,6 +984,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       reviewMarkdown: markdown,
       commentId,
       verdict: gatedReview.verdict,
+      reviewMode,
+      comparedFromSha: plan.comparedFromSha,
       ...severityCounts(gatedReview),
       candidateFindings: generatedCandidates.length,
       rejectedFindings,
@@ -669,8 +998,75 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       outputTokens: totalUsage.outputTokens,
       durationMs: Date.now() - reviewStartedAt,
     });
+    for (const finding of reconciliation.resolved) {
+      if (finding.githubCommentId === null || finding.resolutionRepliedAt !== null) continue;
+      const commentIsInScope = await dependencies.github.verifyPullRequestReviewCommentScope(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+        finding.githubCommentId,
+      );
+      if (!commentIsInScope) continue;
+      const attemptId = randomUUID();
+      const claimed = await dependencies.queries.claimFindingResolutionReply(
+        job.installationId,
+        job.repositoryId,
+        job.prNumber,
+        finding.id,
+        job.headSha,
+        attemptId,
+      );
+      if (!claimed) continue;
+      try {
+        const marker = resolutionReplyMarker(finding.id, job.headSha);
+        const existingReplyId = await dependencies.github.findPullRequestReviewReply(
+          job.installationId,
+          job.repoFullName,
+          job.prNumber,
+          finding.githubCommentId,
+          marker,
+        );
+        const replyCommentId = existingReplyId ?? await dependencies.github.replyToPullRequestReviewComment(
+          job.installationId,
+          job.repoFullName,
+          job.prNumber,
+          finding.githubCommentId,
+          resolutionReplyBody(finding.id, job.headSha),
+        );
+        const marked = await dependencies.queries.markFindingResolutionReplied(
+          job.installationId,
+          job.repositoryId,
+          job.prNumber,
+          finding.id,
+          job.headSha,
+          attemptId,
+          replyCommentId,
+        );
+        if (!marked) {
+          await dependencies.queries.releaseFindingResolutionReply(
+            job.installationId,
+            job.repositoryId,
+            job.prNumber,
+            finding.id,
+            job.headSha,
+            attemptId,
+          );
+        }
+      } catch {
+        await dependencies.queries.releaseFindingResolutionReply(
+          job.installationId,
+          job.repositoryId,
+          job.prNumber,
+          finding.id,
+          job.headSha,
+          attemptId,
+        );
+      }
+    }
     return {
       status: "completed" as const,
+      reviewMode,
+      comparedFromSha: plan.comparedFromSha,
       context: {
         fullFile: fullFileContext.metadata,
         relatedCode: relatedCodeContext.metadata,

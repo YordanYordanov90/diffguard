@@ -224,6 +224,19 @@ Update this file after every meaningful implementation change.
   Automated evidence, adversarial, cost, timeout, lint, test, and
   production-build checks pass; deployed PR #38 replay remains acceptance
   verification.
+- Feature 27 (Incremental Review Baseline) — implementation completed
+  2026-07-29: reviews store `review_mode` (`full` | `incremental` |
+  `fallback_full`) and `compared_from_sha` without changing the
+  `(repository_id, pr_number, head_sha)` idempotency key. The worker resolves
+  the previous completed head only from the database, confirms PR membership
+  and pure ancestry via GitHub compare, fetches the exclusive commit-range
+  diff when safe, and broadens to the full PR diff on missing bases,
+  rewritten history, truncated comparisons, or range-fetch failure. Mode and
+  SHA range appear in the summary footer. Internal `forceFullReview` on the
+  job payload is reserved for Feature 34. Stale-head is re-checked immediately
+  before publication. Pure baseline tests and worker fixtures cover first
+  review, descendant pushes, force-push fallback, deleted bases, truncated
+  compare, and post-generation stale head.
 - Feature 25 (Finding Records & Stable Fingerprints) — implementation
   completed 2026-07-29: `review_findings` table and lifecycle/confidence/
   severity/category enums, trusted pure-code SHA-256 fingerprints, confirmed-
@@ -254,6 +267,23 @@ Update this file after every meaningful implementation change.
 - PR #57 DiffGuard low-risk feedback — implementation completed 2026-07-29:
   published comment-ID matching also requires the deterministic rendered body,
   so same-coordinate inline findings cannot attach to each other's comment.
+- Dev/main merge resolution — completed 2026-07-29: durable findings retain
+  migration `0002_review_findings`; the incremental baseline was regenerated as
+  migration `0003_curly_punisher`. A stale head now skips all publication so a
+  superseded incremental review cannot post either inline or summary comments.
+- Feature 28 (Finding Reconciliation) — implementation completed 2026-07-29:
+  incremental reviews now load tenant/PR-scoped open findings, allowlist only
+  findings whose file is touched by the range, and accept bounded structured
+  open/resolved updates for those ids alone. Omitted or invalid updates remain
+  open; confirmed reoccurrences reopen resolved rows but never dismissed rows.
+  Reconciliation persists in one Neon batch, preserves prior resolution
+  metadata on reopen, and the summary separates new, recurring, still-open,
+  and resolved findings. First resolutions acquire a tenant/PR-scoped reply
+  lease before replying to their inline thread; each attempt has a unique
+  token and deterministic marker, accepted reply ids are persisted, and failed
+  replies release only their own lease for retry. Range-fetch failures broaden
+  to a full review, and the worker rechecks the head before durable finding
+  writes.
 
 ## In Progress
 
@@ -267,14 +297,12 @@ Update this file after every meaningful implementation change.
   end-to-end, and beta comparison checks remain.
 - Feature 24 deployed acceptance verification: replay PR #38 at `3dfdbfb`
   and confirm both documented false positives remain finding-free.
-
-
 ## Next Up
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
 2. Continue the review-quality roadmap in dependency order:
-   - Features 27–28: incremental review and finding reconciliation;
+   - Feature 28: finding reconciliation on top of incremental baselines;
    - Feature 29: linked GitHub Issue validation;
    - Features 30–32: feedback signals and governed repository learnings;
    - Features 33–34: PR-scoped AI conversation as the final feature.

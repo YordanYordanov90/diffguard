@@ -51,9 +51,10 @@ precise replacement.
   summary without an inline comment.
 - If GitHub rejects a batch, retry once without invalid inline entries. The
   summary review must still complete successfully.
-- Recheck the PR head immediately before inline publication; a stale result
-  becomes summary-only. Once GitHub accepts a review POST, retry only comment
-  retrieval and never post a second review for that accepted request.
+- Recheck the PR head immediately before inline publication. Once Feature 27
+  incremental baselines are enabled, a stale result skips all publication so a
+  stale summary cannot be posted. Once GitHub accepts a review POST, retry only
+  comment retrieval and never post a second review for that accepted request.
 - Secondary rate limiting or inline publishing failure is recorded safely and
   must not duplicate the summary or mark valid LLM output as malformed.
 

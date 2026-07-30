@@ -11,6 +11,7 @@ unused webhook fields.
 ReviewStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 SkipReason   = "draft" | "bot_author" | "skip_keyword" | "daily_cap"
              | "rate_limited" | "stale_sha"
+ReviewMode   = "full" | "incremental" | "fallback_full"
 Severity     = "critical" | "high" | "medium" | "low" | "info"
 Category     = "security" | "bug" | "quality" | "performance"
 Verdict      = "approve" | "comment" | "concerns"
@@ -54,6 +55,8 @@ head_sha         text NOT NULL        // 40-char SHA
 status           ReviewStatus NOT NULL DEFAULT 'queued'
 skip_reason      SkipReason NULL
 verdict          Verdict NULL
+review_mode      ReviewMode NOT NULL DEFAULT 'full'
+compared_from_sha text NULL            // prior completed head for incremental
 review_markdown  text NULL            // rendered comment body (never the diff)
 comment_id       bigint NULL          // GitHub comment id for edit-in-place
 findings_critical integer NOT NULL DEFAULT 0
@@ -78,6 +81,9 @@ updated_at       timestamptz NOT NULL DEFAULT now()
 UNIQUE (repository_id, pr_number, head_sha)   // idempotency key
 INDEX  (installation_id, created_at)          // dashboard + daily cap
 ```
+
+`compared_from_sha`, like `head_sha`, is a 40-character hexadecimal SHA when
+set. Review mode does not change the idempotency key.
 
 Usage/caps are derived: `count(reviews) where installation_id = X and
 created_at >= start_of_day and status != 'skipped'`.
@@ -108,8 +114,13 @@ last_review_id        uuid NOT NULL FK -> reviews.id
 introduced_sha        text NOT NULL
 last_seen_sha         text NOT NULL
 resolved_sha          text NULL
+previous_resolved_sha text NULL       // prior resolution preserved on reopen
 github_comment_id     bigint NULL
 resolution_replied_at timestamptz NULL
+previous_resolution_replied_at timestamptz NULL
+resolution_reply_claimed_at timestamptz NULL // guarded reply lease
+resolution_reply_attempt_id uuid NULL       // unique reply attempt token
+resolution_reply_comment_id bigint NULL     // durable GitHub reply id
 dismissed_at          timestamptz NULL
 created_at            timestamptz NOT NULL DEFAULT now()
 updated_at            timestamptz NOT NULL DEFAULT now()
@@ -242,10 +253,17 @@ FindingCandidate = Finding & {
   suggestedChange:             SuggestedChange | null
 }
 
+FindingUpdate = {
+  findingId: string            // trusted allowlisted UUID only
+  status:    "open" | "resolved"
+  reason:    string
+}
+
 CandidateReviewOutput = {
   summary:    string
   verdict:    Verdict
   candidates: FindingCandidate[]
+  findingUpdates: FindingUpdate[]  // defaults to [] when no prior finding changes
 }
 
 FindingAdjudication = {
@@ -274,7 +292,10 @@ candidates become the publishable `ReviewOutput` and durable
 `review_findings` rows; rejected and manual-verification candidates never
 affect counts, output, or finding persistence. Malformed, missing, duplicate,
 or arbitrary adjudication ids confirm nothing for the affected candidate.
-Fingerprints are never accepted from the LLM.
+Fingerprints are never accepted from the LLM. Finding updates may reference
+only tenant/PR-scoped ids independently allowlisted from open findings whose
+file was touched by the incremental range; omitted or invalid updates preserve
+the existing finding as open.
 
 ## Webhook Boundary (Zod — validated after HMAC verification)
 
@@ -380,8 +401,9 @@ never persisted.
 
 ## Planned Review-Quality Contracts
 
-The remaining contracts below belong to Features 27–34 and are **not implemented yet**
-(Features 25–26 finding rows, fingerprints, and inline review comments are
+The remaining contracts below belong to Features 28–34 and are **not implemented yet**
+(Features 25–27 finding rows, fingerprints, inline review comments, and incremental
+review baselines are
 implemented above). They are the shape source of truth when each numbered feature
 begins. Move each contract into the implemented sections above, and update the
 matching Zod/Drizzle code in the same increment.
@@ -389,26 +411,27 @@ matching Zod/Drizzle code in the same increment.
 ### Planned enums
 
 ```ts
-ReviewMode       = "full" | "incremental" | "fallback_full"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-`FindingLifecycle` is implemented above under Enums.
-
-### Planned reviews additions (Features 27 and 29)
+### Planned reviews additions (Feature 29)
 
 ```ts
-review_mode              ReviewMode NOT NULL DEFAULT "full"
-compared_from_sha        text NULL       // prior completed head for incremental
 linked_issue_assessments jsonb NOT NULL DEFAULT "[]"
 ```
 
-`compared_from_sha`, like `head_sha`, is a 40-character hexadecimal SHA.
 The JSON column is validated as `IssueAssessment[]` before every write and
 after every read.
+
+### Review job (QStash — Feature 27 addition)
+
+```ts
+// existing fields plus:
+forceFullReview?: boolean  // internal override for Feature 34; default false
+```
 
 ### finding_feedback (Feature 30)
 
@@ -494,7 +517,7 @@ PRIMARY KEY (repository_id, pr_number)
 INDEX (installation_id, repository_id, pr_number)
 ```
 
-### Planned structured LLM contracts (Features 25–29 and 34)
+### Implemented inputs and planned LLM extensions (Features 29 and 34)
 
 ```ts
 SuggestedChange = {
@@ -516,6 +539,7 @@ CandidateReviewOutput = {
   summary:    string
   verdict:    Verdict
   candidates: FindingCandidate[]
+  findingUpdates: FindingUpdate[]
 }
 
 FindingAdjudication = {
@@ -571,17 +595,10 @@ strings and arrays receive explicit Zod length limits in the implementing
 feature. Candidate ids, finding-update ids, and issue numbers are checked
 against server-built allowlists after schema validation.
 
-### Planned prompt context additions (Features 24 and 28–31)
+### Planned prompt context additions (Features 29–31)
 
 ```ts
 PromptContextV2 = PromptContext & {
-  findingsToReevaluate: {
-    id: string
-    file: string
-    line: number | null
-    title: string
-    detail: string
-  }[]
   linkedIssues: {
     issueNumber: number
     title: string

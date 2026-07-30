@@ -1,6 +1,7 @@
 export * from "./job";
 export * from "./schema";
 export * from "./diff";
+export * from "./baseline";
 export * from "./context";
 export * from "./related-context";
 export * from "./prompt";

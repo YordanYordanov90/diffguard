@@ -43,6 +43,13 @@ export type SkipReason = (typeof skipReasonEnum.enumValues)[number];
 
 export const verdictEnum = pgEnum("verdict", ["approve", "comment", "concerns"]);
 
+export const reviewModeEnum = pgEnum("review_mode", [
+  "full",
+  "incremental",
+  "fallback_full",
+]);
+
+export type ReviewMode = (typeof reviewModeEnum.enumValues)[number];
 export const severityEnum = pgEnum("severity", [
   "critical",
   "high",
@@ -116,6 +123,8 @@ export const reviews = pgTable(
     status: reviewStatusEnum("status").notNull().default("queued"),
     skipReason: skipReasonEnum("skip_reason"),
     verdict: verdictEnum("verdict"),
+    reviewMode: reviewModeEnum("review_mode").notNull().default("full"),
+    comparedFromSha: text("compared_from_sha"),
     reviewMarkdown: text("review_markdown"),
     commentId: bigint("comment_id", { mode: "number" }),
     findingsCritical: integer("findings_critical").notNull().default(0),
@@ -191,10 +200,23 @@ export const reviewFindings = pgTable(
     introducedSha: text("introduced_sha").notNull(),
     lastSeenSha: text("last_seen_sha").notNull(),
     resolvedSha: text("resolved_sha"),
+    previousResolvedSha: text("previous_resolved_sha"),
     githubCommentId: bigint("github_comment_id", { mode: "number" }),
     resolutionRepliedAt: timestamp("resolution_replied_at", {
       withTimezone: true,
       mode: "date",
+    }),
+    previousResolutionRepliedAt: timestamp("previous_resolution_replied_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    resolutionReplyClaimedAt: timestamp("resolution_reply_claimed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    resolutionReplyAttemptId: uuid("resolution_reply_attempt_id"),
+    resolutionReplyCommentId: bigint("resolution_reply_comment_id", {
+      mode: "number",
     }),
     dismissedAt: timestamp("dismissed_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
