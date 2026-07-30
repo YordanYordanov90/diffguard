@@ -55,7 +55,7 @@ export type LinkedIssueFetchOutcome =
   | {
       status: "inaccessible";
       issueNumber: number;
-      reason: "missing" | "forbidden" | "not_an_issue" | "duplicate" | "invalid" | "unavailable";
+      reason: "missing" | "forbidden" | "not_an_issue" | "invalid" | "unavailable";
     };
 
 function parseRepositoryName(fullName: string): { owner: string; repo: string } | null {

@@ -452,8 +452,6 @@ function inaccessibleIssueReason(status: Exclude<RepositoryIssueResult["status"]
       return "Issue was not found in this repository.";
     case "not_an_issue":
       return "Reference points to a pull request, not an issue.";
-    case "duplicate":
-      return "Issue is closed as a duplicate, so its requirements are unclear.";
     case "invalid":
       return "Issue response was invalid or incomplete.";
     case "unavailable":
@@ -463,9 +461,9 @@ function inaccessibleIssueReason(status: Exclude<RepositoryIssueResult["status"]
 
 async function loadLinkedIssueOutcomes(
   job: ReviewJob,
+  references: ReturnType<typeof parseLinkedIssueReferences>,
   dependencies: ReviewWorkerDependencies,
 ): Promise<LinkedIssueFetchOutcome[]> {
-  const references = parseLinkedIssueReferences(job.prBody, job.repoFullName);
   if (references.length === 0) return [];
 
   const outcomes: LinkedIssueFetchOutcome[] = [];
@@ -725,6 +723,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
   const reviewStartedAt = Date.now();
   const llmDeadline = reviewStartedAt + LLM_TIMEOUT_MS;
   try {
+    const linkedIssueReferences = parseLinkedIssueReferences(job.prBody, job.repoFullName);
     const [{ plan, rawDiff }, model, instructions, linkedIssueOutcomes] = await Promise.all([
       selectReviewDiff(job, dependencies),
       dependencies.queries.getInstallationModel(job.installationId),
@@ -733,7 +732,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         job.repoFullName,
         job.headSha,
       ),
-      loadLinkedIssueOutcomes(job, dependencies),
+      loadLinkedIssueOutcomes(job, linkedIssueReferences, dependencies),
     ]);
     if (!model) throw new Error("Installation model configuration is missing.");
 
@@ -750,7 +749,6 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       openFindings.map(toOpenFinding),
       processedDiff.files,
     );
-    const linkedIssueReferences = parseLinkedIssueReferences(job.prBody, job.repoFullName);
     const linkedIssuePromptContext = toLinkedIssuePromptContext(linkedIssueOutcomes);
     const inaccessibleLinkedIssues = new Map<number, string>();
     for (const outcome of linkedIssueOutcomes) {

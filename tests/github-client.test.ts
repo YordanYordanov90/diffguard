@@ -268,7 +268,7 @@ describe("GitHub client", () => {
       },
     });
     await expect(client.fetchRepositoryIssue(42, "owner/repo", 14)).resolves.toEqual({
-      status: "duplicate",
+      status: "unavailable",
     });
 
     request.mockRejectedValueOnce(

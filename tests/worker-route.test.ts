@@ -377,7 +377,7 @@ describe("review worker route", () => {
     );
 
     const duplicateDeps = createDependencies({}, {
-      fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "duplicate" }),
+      fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "unavailable" }),
     });
     duplicateDeps.generateReview = vi.fn().mockResolvedValue({
       output: {
@@ -400,7 +400,7 @@ describe("review worker route", () => {
           expect.objectContaining({
             issueNumber: 12,
             status: "unclear",
-            rationale: "Issue is closed as a duplicate, so its requirements are unclear.",
+            rationale: "Issue could not be retrieved for this review.",
           }),
         ],
         verdict: "approve",

@@ -143,7 +143,6 @@ export type RepositoryIssueResult =
         | "missing"
         | "forbidden"
         | "not_an_issue"
-        | "duplicate"
         | "invalid"
         | "unavailable";
     };
@@ -471,7 +470,7 @@ export function createGitHubClient(
         }
         if (parsed.data.number !== issueNumber) return { status: "invalid" };
         if (parsed.data.state === "closed" && parsed.data.state_reason === "duplicate") {
-          return { status: "duplicate" };
+          return { status: "unavailable" };
         }
         return {
           status: "fetched",
