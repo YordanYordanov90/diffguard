@@ -148,7 +148,7 @@ describe("feedback worker", () => {
       42,
       "owner/repo",
       7,
-      9001,
+      7001,
       "Recorded as useful. Thanks for the signal.",
     );
   });

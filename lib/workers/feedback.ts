@@ -157,11 +157,13 @@ async function processFeedbackJob(
   }
 
   try {
+    // GitHub only accepts replies under the top-level review comment, not
+    // replies-to-replies. sourceCommentId is the user's command reply.
     await dependencies.github.replyToPullRequestReviewComment(
       job.installationId,
       job.repoFullName,
       job.prNumber,
-      job.sourceCommentId,
+      job.parentCommentId,
       feedbackAcknowledgement(job.action),
     );
   } catch {
