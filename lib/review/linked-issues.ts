@@ -194,14 +194,21 @@ export function toPersistedIssueAssessments(
   assessments: IssueAssessment[],
   titlesByNumber: ReadonlyMap<number, string>,
 ): PersistedIssueAssessment[] {
-  return assessments.flatMap((assessment) => {
+  return assessments.map((assessment) => {
     const title = titlesByNumber.get(assessment.issueNumber) ?? `Issue #${assessment.issueNumber}`;
     const candidate = {
       ...assessment,
       title: boundIssueTitle(title),
     };
     const parsed = persistedIssueAssessmentSchema.safeParse(candidate);
-    return parsed.success ? [parsed.data] : [];
+    if (parsed.success) return parsed.data;
+    return persistedIssueAssessmentSchema.parse({
+      issueNumber: assessment.issueNumber,
+      title: boundIssueTitle(`Issue #${assessment.issueNumber}`),
+      status: "unclear",
+      rationale: "The linked issue assessment could not be persisted safely.",
+      unmetRequirements: [],
+    });
   });
 }
 
