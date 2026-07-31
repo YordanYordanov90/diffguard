@@ -8,8 +8,8 @@ Update this file after every meaningful implementation change.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Features 22 and 24
   are implemented with acceptance verification still pending, Feature 23 is
-  underway, and Features 25–26 (finding records and inline comments) are
-  implemented.
+  underway, Features 25–26 and 28–30 (findings, reconciliation, linked issues,
+  feedback signals) are implemented, and Features 31–34 remain.
 
 ## Current Goal
 
@@ -295,6 +295,18 @@ Update this file after every meaningful implementation change.
   render, schema, GitHub client, and worker tests pass. Remaining: enable
   `Issues: read` on the GitHub App and verify installation re-approval before
   beta; end-to-end issue with measurable acceptance criteria on a scratch PR.
+- Feature 30 (Review Feedback Signals) — implementation completed 2026-07-31:
+  `pull_request_review_comment` webhook schema and dispatch, pure
+  `@diffguard valid|dismiss:|false-positive:` command parser (no LLM),
+  signed QStash feedback job + `/api/jobs/feedback` worker, GitHub
+  collaborator-permission check at processing time, tenant-scoped
+  `finding_feedback` table (unique source comment id), open→dismissed for
+  dismiss/false-positive only, short acknowledgement replies, bot/edit/delete/
+  free-form/unauthorized/cross-tenant ignores. Migration
+  `0007_finding_feedback.sql` (applied to Neon). Parser, trigger, webhook,
+  boundary-schema, and worker authorization tests pass. Remaining: ensure the
+  GitHub App subscribes to `pull_request_review_comment`, then dogfood one
+  valid + one false-positive signal on a scratch PR.
 
 ## In Progress
 
@@ -315,7 +327,9 @@ Update this file after every meaningful implementation change.
 2. Continue the review-quality roadmap in dependency order:
    - Feature 29: enable `Issues: read` on the GitHub App and e2e-verify on a
      scratch PR with measurable acceptance criteria;
-   - Features 30–32: feedback signals and governed repository learnings;
+   - Feature 30: apply `0007_finding_feedback` on Neon and dogfood valid +
+     false-positive signals on a scratch PR;
+   - Features 31–32: governed repository learnings;
    - Features 33–34: PR-scoped AI conversation as the final feature.
 
 ## Open Questions

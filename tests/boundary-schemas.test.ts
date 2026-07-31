@@ -4,7 +4,9 @@ import {
   installationEventSchema,
   installationRepositoriesEventSchema,
   pullRequestEventSchema,
+  pullRequestReviewCommentEventSchema,
 } from "@/lib/github/events";
+import { feedbackJobSchema } from "@/lib/review/feedback-job";
 import { reviewJobSchema } from "@/lib/review/job";
 import {
   adjudicationOutputSchema,
@@ -72,9 +74,64 @@ describe("GitHub boundary schemas", () => {
       }),
     ).toHaveProperty("repositories_added");
   });
+
+  it("parses pull_request_review_comment feedback fields and strips extras", () => {
+    const result = pullRequestReviewCommentEventSchema.parse({
+      action: "created",
+      installation: { id: 42 },
+      repository: { id: 100, full_name: "owner/repo", private: true },
+      pull_request: {
+        number: 7,
+        user: { login: "author", type: "User", id: 1 },
+        draft: false,
+      },
+      comment: {
+        id: 9001,
+        body: "@diffguard dismiss: not relevant",
+        user: { login: "reviewer", type: "User" },
+        in_reply_to_id: 7001,
+        path: "src/auth.ts",
+      },
+      sender: { login: "reviewer" },
+    });
+
+    expect(result).toEqual({
+      action: "created",
+      installation: { id: 42 },
+      repository: { id: 100, full_name: "owner/repo" },
+      pull_request: {
+        number: 7,
+        user: { login: "author", type: "User" },
+      },
+      comment: {
+        id: 9001,
+        body: "@diffguard dismiss: not relevant",
+        user: { login: "reviewer", type: "User" },
+        in_reply_to_id: 7001,
+      },
+    });
+  });
 });
 
 describe("review boundary schemas", () => {
+  it("parses a valid QStash feedback job", () => {
+    expect(
+      feedbackJobSchema.parse({
+        installationId: 42,
+        repositoryId: 100,
+        repoFullName: "owner/repo",
+        prNumber: 7,
+        parentCommentId: 7001,
+        sourceCommentId: 9001,
+        actorLogin: "reviewer",
+        prAuthorLogin: "author",
+        action: "false_positive",
+        reason: "intentional",
+        deliveryId: "delivery-1",
+      }),
+    ).toMatchObject({ action: "false_positive", reason: "intentional" });
+  });
+
   it("parses a valid QStash review job", () => {
     expect(
       reviewJobSchema.parse({

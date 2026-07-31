@@ -4,18 +4,25 @@ import {
   installationEventSchema,
   installationRepositoriesEventSchema,
   pullRequestEventSchema,
+  pullRequestReviewCommentEventSchema,
   type InstallationEvent,
   type InstallationRepositoriesEvent,
   type PullRequestEvent,
+  type PullRequestReviewCommentEvent,
 } from "@/lib/github/events";
 import {
   handleInstallation,
   handleInstallationRepos,
 } from "@/lib/github/webhook-handlers";
 import { handlePullRequest } from "@/lib/github/review-trigger";
+import { handlePullRequestReviewComment } from "@/lib/github/feedback-trigger";
 
 export type WebhookHandlers = {
   handlePullRequest: (event: PullRequestEvent, deliveryId: string) => void | Promise<void>;
+  handlePullRequestReviewComment: (
+    event: PullRequestReviewCommentEvent,
+    deliveryId: string,
+  ) => void | Promise<void>;
   handleInstallation: (event: InstallationEvent, deliveryId: string) => void | Promise<void>;
   handleInstallationRepos: (
     event: InstallationRepositoriesEvent,
@@ -26,6 +33,9 @@ export type WebhookHandlers = {
 const defaultHandlers: WebhookHandlers = {
   handlePullRequest: async (event, deliveryId) => {
     await handlePullRequest(event, deliveryId);
+  },
+  handlePullRequestReviewComment: async (event, deliveryId) => {
+    await handlePullRequestReviewComment(event, deliveryId);
   },
   handleInstallation,
   handleInstallationRepos,
@@ -59,6 +69,11 @@ function parseEvent(eventName: string, payload: unknown) {
   switch (eventName) {
     case "pull_request":
       return { kind: eventName, event: pullRequestEventSchema.parse(payload) };
+    case "pull_request_review_comment":
+      return {
+        kind: eventName,
+        event: pullRequestReviewCommentEventSchema.parse(payload),
+      };
     case "installation":
       return { kind: eventName, event: installationEventSchema.parse(payload) };
     case "installation_repositories":
@@ -82,6 +97,8 @@ async function dispatch(
 
   if (parsed.kind === "pull_request") {
     await handlers.handlePullRequest(parsed.event, deliveryId);
+  } else if (parsed.kind === "pull_request_review_comment") {
+    await handlers.handlePullRequestReviewComment(parsed.event, deliveryId);
   } else if (parsed.kind === "installation") {
     await handlers.handleInstallation(parsed.event, deliveryId);
   } else {

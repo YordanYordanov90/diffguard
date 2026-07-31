@@ -99,6 +99,19 @@ const pullRequestReviewCommentScopeSchema = z.object({
   pull_request_url: z.string().url(),
 });
 
+/** GitHub collaborator permission levels used for Feature 30 feedback auth. */
+export type RepositoryPermission =
+  | "admin"
+  | "maintain"
+  | "write"
+  | "triage"
+  | "read"
+  | "none";
+
+const collaboratorPermissionSchema = z.object({
+  permission: z.enum(["admin", "maintain", "write", "triage", "read", "none"]),
+});
+
 const pullRequestReviewReplySchema = z.object({
   id: z.number().int().positive(),
   in_reply_to_id: z.number().int().positive().nullable().optional(),
@@ -784,6 +797,30 @@ export function createGitHubClient(
       }
       return parseAccessibleInstallations(installations);
     },
+
+    /**
+     * Current repository permission for a user at processing time.
+     * Missing collaborators and 404s become `none` — never trust webhook text.
+     */
+    async getCollaboratorPermission(
+      installationId: number,
+      repoFullName: string,
+      username: string,
+    ): Promise<RepositoryPermission> {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/collaborators/{username}/permission",
+          { owner, repo, username },
+        );
+        const parsed = collaboratorPermissionSchema.safeParse(response.data);
+        return parsed.success ? parsed.data.permission : "none";
+      } catch (error) {
+        if (isNotFound(error) || isForbidden(error)) return "none";
+        throw error;
+      }
+    },
   };
 }
 
@@ -841,6 +878,9 @@ export const githubClient = {
   getUserInstallations: (
     ...args: Parameters<GitHubClient["getUserInstallations"]>
   ) => getDefaultClient().getUserInstallations(...args),
+  getCollaboratorPermission: (
+    ...args: Parameters<GitHubClient["getCollaboratorPermission"]>
+  ) => getDefaultClient().getCollaboratorPermission(...args),
 };
 
 export const {
@@ -860,4 +900,5 @@ export const {
   createPullRequestReview,
   listPullRequestReviewComments,
   getUserInstallations,
+  getCollaboratorPermission,
 } = githubClient;
