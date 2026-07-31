@@ -36,6 +36,7 @@ type ConversationQueries = {
   }) => Promise<{
     interaction: { id: string; status: string } | null;
     created: boolean;
+    reason?: "daily_cap";
   }>;
   createSkippedInteraction: (input: {
     installationId: number;
@@ -163,13 +164,42 @@ export function createConversationTriggerHandler(
       sourceCommentId,
     };
 
+    const publishQueuedInteraction = async (interactionId: string) => {
+      const job: ConversationJob = {
+        installationId,
+        repositoryId,
+        repoFullName: event.repository.full_name,
+        prNumber,
+        sourceCommentId,
+        actorLogin,
+        prAuthorLogin: event.issue.user.login,
+        deliveryId,
+        interactionId,
+      };
+
+      try {
+        await dependencies.qstash.publishJSON({
+          url: dependencies.conversationWorkerUrl,
+          body: job,
+        });
+      } catch {
+        // Leave queued for another webhook redelivery/manual recovery.
+        throw new Error("Conversation job publish failed.");
+      }
+
+      return { status: "queued" as const };
+    };
+
     const conversationsToday =
       await dependencies.queries.countConversationsToday(installationId);
     if (conversationsToday >= DAILY_CONVERSATION_CAP) {
-      await dependencies.queries.createSkippedInteraction({
+      const skipped = await dependencies.queries.createSkippedInteraction({
         ...baseInput,
         error: "daily_cap",
       });
+      if (skipped.interaction?.status === "queued") {
+        return publishQueuedInteraction(skipped.interaction.id);
+      }
       return { status: "skipped", reason: "daily_cap" };
     }
 
@@ -182,40 +212,33 @@ export function createConversationTriggerHandler(
     ]);
 
     if (!installationLimit.success || !prLimit.success || !actorLimit.success) {
-      await dependencies.queries.createSkippedInteraction({
+      const skipped = await dependencies.queries.createSkippedInteraction({
         ...baseInput,
         error: "rate_limited",
       });
+      if (skipped.interaction?.status === "queued") {
+        return publishQueuedInteraction(skipped.interaction.id);
+      }
       return { status: "skipped", reason: "rate_limited" };
     }
 
     const queued = await dependencies.queries.createQueuedInteraction(baseInput);
-    if (!queued.interaction) return { status: "ignored" };
-    if (!queued.created) return { status: "duplicate" };
-
-    const job: ConversationJob = {
-      installationId,
-      repositoryId,
-      repoFullName: event.repository.full_name,
-      prNumber,
-      sourceCommentId,
-      actorLogin,
-      prAuthorLogin: event.issue.user.login,
-      deliveryId,
-      interactionId: queued.interaction.id,
-    };
-
-    try {
-      await dependencies.qstash.publishJSON({
-        url: dependencies.conversationWorkerUrl,
-        body: job,
+    if (queued.reason === "daily_cap") {
+      const skipped = await dependencies.queries.createSkippedInteraction({
+        ...baseInput,
+        error: "daily_cap",
       });
-    } catch {
-      // Leave queued for retry via redelivery/manual recovery; surface failure.
-      throw new Error("Conversation job publish failed.");
+      if (skipped.interaction?.status === "queued") {
+        return publishQueuedInteraction(skipped.interaction.id);
+      }
+      return { status: "skipped", reason: "daily_cap" };
+    }
+    if (!queued.interaction) return { status: "ignored" };
+    if (!queued.created && queued.interaction.status !== "queued") {
+      return { status: "duplicate" };
     }
 
-    return { status: "queued" };
+    return publishQueuedInteraction(queued.interaction.id);
   };
 }
 

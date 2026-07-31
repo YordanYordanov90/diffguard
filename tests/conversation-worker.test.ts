@@ -4,6 +4,7 @@ vi.mock("@/lib/db/client", () => ({ db: {} }));
 
 import {
   actorMayStartConversation,
+  getConversationAcknowledgementMarker,
   handleConversationWorker,
 } from "@/lib/workers/conversation";
 import type { ConversationJob } from "@/lib/review/conversation-job";
@@ -35,6 +36,7 @@ function signedRequest(job: ConversationJob) {
 function createDependencies(
   overrides: {
     interactionStatus?: string;
+    claimResult?: { id: string; status: "running" } | null;
     commentStatus?: "fetched" | "missing" | "unavailable";
     prStatus?: "accessible" | "missing" | "unavailable";
     permission?: "admin" | "maintain" | "write" | "triage" | "read" | "none";
@@ -49,10 +51,11 @@ function createDependencies(
         id: baseJob.interactionId,
         status: overrides.interactionStatus ?? "queued",
       }),
-      claimInteractionRunning: vi.fn().mockResolvedValue({
-        id: baseJob.interactionId,
-        status: "running",
-      }),
+      claimInteractionRunning: vi.fn().mockResolvedValue(
+        overrides.claimResult === undefined
+          ? { id: baseJob.interactionId, status: "running" }
+          : overrides.claimResult,
+      ),
       markInteractionCompleted: vi.fn().mockResolvedValue({ id: baseJob.interactionId }),
       markInteractionFailed: vi.fn().mockResolvedValue({ id: baseJob.interactionId }),
       markInteractionSkipped: vi.fn().mockResolvedValue({ id: baseJob.interactionId }),
@@ -75,6 +78,7 @@ function createDependencies(
       ),
       fetchPullRequestAccessibility: vi.fn().mockResolvedValue({
         status: overrides.prStatus ?? "accessible",
+        ...(overrides.prStatus === undefined ? { authorLogin: "author" } : {}),
       }),
       listIssueComments: vi.fn().mockResolvedValue({
         status: "fetched",
@@ -127,7 +131,13 @@ describe("conversation worker", () => {
       42,
       "owner/repo",
       7,
-      CONVERSATION_BOUNDARY_ACK,
+      expect.stringContaining(CONVERSATION_BOUNDARY_ACK),
+    );
+    expect(dependencies.github.createIssueComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      expect.stringMatching(/<!-- diffguard-ack:[0-9a-f]{24} -->/),
     );
     expect(dependencies.queries.markInteractionCompleted).toHaveBeenCalled();
     // Thread was loaded ephemerally; no persistence of bodies.
@@ -186,5 +196,76 @@ describe("conversation worker", () => {
       error: null,
     });
     expect(dependencies.queries.claimInteractionRunning).not.toHaveBeenCalled();
+  });
+
+  it("does not perform side effects when the atomic claim is lost", async () => {
+    const dependencies = createDependencies({ claimResult: null });
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      data: { status: "already_processing" },
+      error: null,
+    });
+    expect(dependencies.github.fetchIssueComment).not.toHaveBeenCalled();
+    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate an acknowledgement after a retry", async () => {
+    const dependencies = createDependencies();
+    dependencies.github.listIssueComments.mockResolvedValueOnce({
+      status: "fetched",
+      comments: [
+        {
+          id: 9002,
+          body: getConversationAcknowledgementMarker(baseJob),
+          userLogin: "diffguard-dev[bot]",
+        },
+      ],
+    });
+
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
+    expect(dependencies.queries.markInteractionCompleted).toHaveBeenCalled();
+  });
+
+  it("reclaims a failed interaction when a retry wins the claim", async () => {
+    const dependencies = createDependencies({ interactionStatus: "failed" });
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      data: { status: "completed" },
+    });
+    expect(dependencies.queries.claimInteractionRunning).toHaveBeenCalled();
+  });
+
+  it("rejects jobs whose webhook authors no longer match GitHub", async () => {
+    const dependencies = createDependencies();
+    const response = await handleConversationWorker(
+      signedRequest({ ...baseJob, actorLogin: "attacker" }),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      data: { status: "skipped", reason: "unauthorized" },
+    });
+    expect(dependencies.github.getCollaboratorPermission).not.toHaveBeenCalled();
+    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
   });
 });

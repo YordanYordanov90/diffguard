@@ -335,6 +335,13 @@ Update this file after every meaningful implementation change.
   `0010_pr_interactions.sql` (applied to Neon). Remaining: enable GitHub App
   `Issues: read` + `Issues: write`, subscribe to `issue_comment`, dogfood on
   scratch install before beta re-approval.
+- PR #63 review feedback fixes — implementation completed 2026-07-31:
+  queued conversation interactions are republished after publish failures,
+  worker claims are exclusive with failed-attempt recovery, current GitHub
+  comment/PR authors are revalidated, skipped-interaction reads are tenant
+  scoped, and daily-cap reservation is serialized per installation. Focused
+  conversation trigger, worker, and GitHub client tests pass; full verification
+  remains to run on the fix branch.
 
 ## In Progress
 

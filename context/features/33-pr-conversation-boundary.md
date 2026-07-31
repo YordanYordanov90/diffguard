@@ -30,11 +30,14 @@ PR-scoped AI conversation feature without yet answering questions with an LLM.
   Ignore edits, deletes, bot authors, DiffGuard's own comments, and unrelated
   mentions.
 - Verify actor eligibility at processing time. Allow a current collaborator or
-  the PR author; reserve state-changing commands for write/maintain/admin.
+  the current PR author; webhook actor and PR-author fields are checked against
+  the current GitHub comment and PR authors before authorization.
 - Apply separate per-installation, per-PR, and per-actor rate limits plus a
-  hard daily conversation cap independent of automatic review allowance.
+  hard daily conversation cap independent of automatic review allowance; cap
+  reservation is serialized per installation with the queue insert.
 - Create a small signed QStash conversation job keyed idempotently by GitHub
-  comment id. The webhook verifies, validates, queues, and returns quickly.
+  comment id. The webhook verifies, validates, queues, and returns quickly. A
+  queued interaction is republished on redelivery after a publish failure.
 - Add a conversation worker route that verifies QStash before parsing, checks
   the PR is still accessible, and exits safely for stale/deleted comments.
 - Persist only operational interaction metadata: tenant/repository/PR,
@@ -63,7 +66,10 @@ dashboard chat, long-term conversation memory, or cross-repository questions.
 - Route tests cover signature-before-parse ordering, Zod validation, bot-loop
   prevention, PR detection, authorization, caps, and idempotent delivery.
 - Worker tests cover QStash verification, deleted comments, closed/inaccessible
-  PRs, and safe failure envelopes.
+  PRs, safe failure envelopes, exclusive claims, retryable failed attempts, and
+  current-author mismatches.
+- Concurrency tests or database verification confirm that a daily-cap burst
+  cannot reserve more than the configured installation allowance.
 - Permission rollout is tested on the scratch installation before beta users
   are asked to approve it.
 - Database/log inspection confirms no conversation text or repository source

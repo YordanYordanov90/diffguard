@@ -54,6 +54,10 @@ const pullResponseSchema = z.object({
   head: z.object({ sha: z.string().min(1) }),
 });
 
+const pullRequestAccessibilitySchema = z.object({
+  user: z.object({ login: z.string().min(1) }),
+});
+
 const repositoryTreeResponseSchema = z.object({
   truncated: z.boolean(),
   tree: z.array(
@@ -870,16 +874,21 @@ export function createGitHubClient(
       installationId: number,
       repoFullName: string,
       prNumber: number,
-    ): Promise<{ status: "accessible" | "missing" | "unavailable" }> {
+    ): Promise<
+      | { status: "accessible"; authorLogin: string }
+      | { status: "missing" | "unavailable" }
+    > {
       const { owner, repo } = parseRepositoryName(repoFullName);
       const octokit = await getInstallationClient(dependencies, installationId);
       try {
-        await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+        const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
           owner,
           repo,
           pull_number: prNumber,
         });
-        return { status: "accessible" };
+        const parsed = pullRequestAccessibilitySchema.safeParse(response.data);
+        if (!parsed.success) return { status: "unavailable" };
+        return { status: "accessible", authorLogin: parsed.data.user.login };
       } catch (error) {
         if (isNotFound(error)) return { status: "missing" };
         if (isForbidden(error)) return { status: "unavailable" };

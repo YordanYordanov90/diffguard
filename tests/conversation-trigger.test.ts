@@ -27,6 +27,9 @@ function baseEvent(
 function createDeps(
   overrides: {
     created?: boolean;
+    queuedStatus?: string;
+    queuedReason?: "daily_cap";
+    skippedStatus?: string;
     conversationsToday?: number;
     limitSuccess?: boolean;
   } = {},
@@ -35,11 +38,18 @@ function createDeps(
   return {
     queries: {
       createQueuedInteraction: vi.fn().mockResolvedValue({
-        interaction: { id: "11111111-1111-4111-8111-111111111111", status: "queued" },
+        interaction: {
+          id: "11111111-1111-4111-8111-111111111111",
+          status: overrides.queuedStatus ?? "queued",
+        },
         created: overrides.created ?? true,
+        reason: overrides.queuedReason,
       }),
       createSkippedInteraction: vi.fn().mockResolvedValue({
-        interaction: { id: "11111111-1111-4111-8111-111111111111", status: "skipped" },
+        interaction: {
+          id: "11111111-1111-4111-8111-111111111111",
+          status: overrides.skippedStatus ?? "skipped",
+        },
         created: true,
       }),
       countConversationsToday: vi
@@ -152,11 +162,38 @@ describe("conversation trigger", () => {
     );
   });
 
-  it("is idempotent on duplicate source comment ids", async () => {
+  it("republishes an existing queued interaction after a publish failure", async () => {
     const deps = createDeps({ created: false });
+    await expect(
+      createConversationTriggerHandler(deps)(baseEvent(), "d1"),
+    ).resolves.toEqual({ status: "queued" });
+    expect(deps.qstash.publishJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not republish terminal interactions", async () => {
+    const deps = createDeps({ created: false, queuedStatus: "completed" });
     await expect(
       createConversationTriggerHandler(deps)(baseEvent(), "d1"),
     ).resolves.toEqual({ status: "duplicate" });
     expect(deps.qstash.publishJSON).not.toHaveBeenCalled();
+  });
+
+  it("records a skipped row when the atomic queue decision hits the cap", async () => {
+    const deps = createDeps({ queuedReason: "daily_cap" });
+    await expect(
+      createConversationTriggerHandler(deps)(baseEvent(), "d1"),
+    ).resolves.toEqual({ status: "skipped", reason: "daily_cap" });
+    expect(deps.queries.createSkippedInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "daily_cap" }),
+    );
+    expect(deps.qstash.publishJSON).not.toHaveBeenCalled();
+  });
+
+  it("republishes an existing queued interaction even when redelivery is capped", async () => {
+    const deps = createDeps({ conversationsToday: 50, skippedStatus: "queued" });
+    await expect(
+      createConversationTriggerHandler(deps)(baseEvent(), "d1"),
+    ).resolves.toEqual({ status: "queued" });
+    expect(deps.qstash.publishJSON).toHaveBeenCalledTimes(1);
   });
 });

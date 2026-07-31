@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Receiver } from "@upstash/qstash";
 
 import { parseEnv } from "@/lib/config/env";
@@ -110,6 +112,20 @@ export function actorMayStartConversation(
   return isPrAuthor || COLLABORATOR_PERMISSIONS.has(permission);
 }
 
+export function getConversationAcknowledgementMarker(job: ConversationJob) {
+  const receipt = createHash("sha256")
+    .update(
+      `${job.installationId}:${job.repositoryId}:${job.prNumber}:${job.sourceCommentId}`,
+    )
+    .digest("hex")
+    .slice(0, 24);
+  return `<!-- diffguard-ack:${receipt} -->`;
+}
+
+function getConversationAcknowledgement(job: ConversationJob) {
+  return `${getConversationAcknowledgementMarker(job)}\n${CONVERSATION_BOUNDARY_ACK}`;
+}
+
 async function processConversationJob(
   job: ConversationJob,
   dependencies: ConversationWorkerDependencies,
@@ -121,11 +137,7 @@ async function processConversationJob(
   if (!existing) {
     return { status: "ignored" as const, reason: "unknown_interaction" };
   }
-  if (
-    existing.status === "completed" ||
-    existing.status === "failed" ||
-    existing.status === "skipped"
-  ) {
+  if (existing.status === "completed" || existing.status === "skipped") {
     return { status: "already_processed" as const };
   }
 
@@ -133,7 +145,7 @@ async function processConversationJob(
     job.installationId,
     job.interactionId,
   );
-  if (!claimed && existing.status !== "running") {
+  if (!claimed) {
     return { status: "already_processing" as const };
   }
 
@@ -178,24 +190,35 @@ async function processConversationJob(
     };
   }
 
-  let permission: RepositoryPermission;
-  try {
-    permission = await dependencies.github.getCollaboratorPermission(
-      job.installationId,
-      job.repoFullName,
-      job.actorLogin,
-    );
-  } catch {
-    await dependencies.queries.markInteractionFailed(
+  const sourceAuthorMatchesJob =
+    sourceComment.userLogin.localeCompare(job.actorLogin, undefined, {
+      sensitivity: "accent",
+    }) === 0;
+  const pullRequestAuthorMatchesJob =
+    prAccess.authorLogin.localeCompare(job.prAuthorLogin, undefined, {
+      sensitivity: "accent",
+    }) === 0;
+  if (!sourceAuthorMatchesJob || !pullRequestAuthorMatchesJob) {
+    await dependencies.queries.markInteractionSkipped(
       job.installationId,
       job.interactionId,
-      "permission_check_failed",
+      "unauthorized",
     );
-    return { status: "failed" as const, reason: "permission_check_failed" };
+    return { status: "skipped" as const, reason: "unauthorized" };
   }
 
+  const permission = await dependencies.github.getCollaboratorPermission(
+    job.installationId,
+    job.repoFullName,
+    sourceComment.userLogin,
+  );
+
   if (
-    !actorMayStartConversation(permission, job.actorLogin, job.prAuthorLogin)
+    !actorMayStartConversation(
+      permission,
+      sourceComment.userLogin,
+      prAccess.authorLogin,
+    )
   ) {
     await dependencies.queries.markInteractionSkipped(
       job.installationId,
@@ -211,19 +234,26 @@ async function processConversationJob(
     job.repoFullName,
     job.prNumber,
   );
+  const acknowledgementAlreadyPosted =
+    thread.status === "fetched" &&
+    thread.comments.some((comment) =>
+      comment.body.includes(getConversationAcknowledgementMarker(job)),
+    );
   if (thread.status === "fetched") {
     boundThreadComments(thread.comments);
   }
 
-  try {
-    await dependencies.github.createIssueComment(
-      job.installationId,
-      job.repoFullName,
-      job.prNumber,
-      CONVERSATION_BOUNDARY_ACK,
-    );
-  } catch {
-    // Issues: write may be missing; boundary still completes without a reply.
+  if (!acknowledgementAlreadyPosted && thread.status === "fetched") {
+    try {
+      await dependencies.github.createIssueComment(
+        job.installationId,
+        job.repoFullName,
+        job.prNumber,
+        getConversationAcknowledgement(job),
+      );
+    } catch {
+      // Issues: write may be missing; boundary still completes without a reply.
+    }
   }
 
   await dependencies.queries.markInteractionCompleted(

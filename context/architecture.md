@@ -182,12 +182,16 @@
   need `Issues: write`). After HMAC verification, only newly created human
   comments on pull-request issues that begin with `@diffguard` are enqueued.
   Separate per-installation, per-PR, and per-actor rate limits plus a daily
-  conversation cap (independent of review caps) apply before queueing. The
-  worker re-checks collaborator/PR-author eligibility, skips deleted comments
-  and inaccessible PRs, fetches a bounded comment thread into memory only,
-  and completes without an LLM answer. `pr_interactions` stores only
-  operational metadata keyed by source comment id — never question/answer
-  text, diffs, or prompts.
+  conversation cap (independent of review caps) apply before queueing; the
+  installation-scoped cap check and queue insert are serialized atomically.
+  Existing queued interactions are republished after a webhook delivery
+  failure, while only the delivery that wins the worker claim may perform
+  side effects. Failed infrastructure attempts remain retryable. The worker
+  re-checks current comment and PR authors plus collaborator/PR-author
+  eligibility, skips deleted comments and inaccessible PRs, fetches a bounded
+  comment thread into memory only, and completes without an LLM answer.
+  `pr_interactions` stores only operational metadata keyed by source comment id
+  — never question/answer text, diffs, or prompts.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
@@ -198,6 +202,8 @@
 2. No diff or repository source code is ever written to the database
    or logs.
 3. Every query touching tenant data filters by `installation_id`.
+3a. Conversation capacity reservation is serialized per installation; a
+    concurrent burst cannot exceed the hard daily cap.
 4. A review is idempotent on `(repository, pr_number, head_sha)`:
    re-delivery or retry of a completed review exits cleanly and never
    double-posts or double-counts.

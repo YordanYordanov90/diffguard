@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
 import {
+  DAILY_CONVERSATION_CAP,
   LEARNING_GUIDANCE_MAX_CHARS,
   MAX_ACTIVE_LEARNINGS_PER_REPO,
 } from "@/lib/config/constants";
@@ -1864,6 +1865,7 @@ export type QueuedInteractionInput = {
 export type QueuedInteractionResult = {
   interaction: typeof prInteractions.$inferSelect | null;
   created: boolean;
+  reason?: "daily_cap";
 };
 
 /**
@@ -1873,48 +1875,98 @@ export async function createQueuedInteraction(
   input: QueuedInteractionInput,
   database: Database = defaultDb,
 ): Promise<QueuedInteractionResult> {
-  const [repository] = await database
-    .select({ id: repositories.id })
-    .from(repositories)
-    .where(
-      and(
-        eq(repositories.id, input.repositoryId),
-        eq(repositories.installationId, input.installationId),
-      ),
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const startOfNextDay = new Date(startOfDay);
+  startOfNextDay.setUTCDate(startOfNextDay.getUTCDate() + 1);
+
+  type QueueDecision = {
+    id: string | null;
+    created: boolean;
+    reason: string | null;
+  };
+  const [decision] = await database.execute<QueueDecision>(sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(42::int, ${input.installationId}::int)
+    ),
+    existing AS (
+      SELECT interaction.id
+      FROM pr_interactions AS interaction, locked
+      WHERE interaction.source_comment_id = ${input.sourceCommentId}
+        AND interaction.installation_id = ${input.installationId}
+    ),
+    capacity AS (
+      SELECT count(*) < ${DAILY_CONVERSATION_CAP} AS available
+      FROM pr_interactions AS interaction, locked
+      WHERE interaction.installation_id = ${input.installationId}
+        AND interaction.created_at >= ${startOfDay}
+        AND interaction.created_at < ${startOfNextDay}
+        AND interaction.status <> 'skipped'
+    ),
+    eligible AS (
+      SELECT 1
+      FROM repositories AS repository, capacity
+      WHERE repository.id = ${input.repositoryId}
+        AND repository.installation_id = ${input.installationId}
+        AND capacity.available
+        AND NOT EXISTS (SELECT 1 FROM existing)
+    ),
+    inserted AS (
+      INSERT INTO pr_interactions (
+        installation_id,
+        repository_id,
+        pr_number,
+        source_comment_id,
+        status
+      )
+      SELECT
+        ${input.installationId},
+        ${input.repositoryId},
+        ${input.prNumber},
+        ${input.sourceCommentId},
+        'queued'
+      FROM eligible
+      ON CONFLICT (source_comment_id) DO NOTHING
+      RETURNING id
     )
-    .limit(1);
-  if (!repository) {
-    return { interaction: null, created: false };
+    SELECT inserted.id, true AS created, NULL::text AS reason
+    FROM inserted
+    UNION ALL
+    SELECT existing.id, false AS created, NULL::text AS reason
+    FROM existing
+    UNION ALL
+    SELECT NULL::uuid, false AS created, 'daily_cap' AS reason
+    FROM capacity
+    WHERE NOT capacity.available
+      AND NOT EXISTS (SELECT 1 FROM existing)
+      AND EXISTS (
+        SELECT 1
+        FROM repositories AS repository
+        WHERE repository.id = ${input.repositoryId}
+          AND repository.installation_id = ${input.installationId}
+      )
+    LIMIT 1
+  `);
+
+  if (!decision) return { interaction: null, created: false };
+  if (decision.reason === "daily_cap") {
+    return { interaction: null, created: false, reason: "daily_cap" };
   }
+  if (!decision.id) return { interaction: null, created: false };
 
-  const [inserted] = await database
-    .insert(prInteractions)
-    .values({
-      installationId: input.installationId,
-      repositoryId: input.repositoryId,
-      prNumber: input.prNumber,
-      sourceCommentId: input.sourceCommentId,
-      status: "queued",
-    })
-    .onConflictDoNothing({
-      target: prInteractions.sourceCommentId,
-    })
-    .returning();
-
-  if (inserted) return { interaction: inserted, created: true };
-
-  const [existing] = await database
+  const [interaction] = await database
     .select()
     .from(prInteractions)
     .where(
       and(
-        eq(prInteractions.sourceCommentId, input.sourceCommentId),
+        eq(prInteractions.id, decision.id),
         eq(prInteractions.installationId, input.installationId),
       ),
     )
     .limit(1);
 
-  return { interaction: existing ?? null, created: false };
+  return { interaction: interaction ?? null, created: decision.created };
 }
 
 export async function createSkippedInteraction(
@@ -1955,7 +2007,12 @@ export async function createSkippedInteraction(
   const [existing] = await database
     .select()
     .from(prInteractions)
-    .where(eq(prInteractions.sourceCommentId, input.sourceCommentId))
+    .where(
+      and(
+        eq(prInteractions.sourceCommentId, input.sourceCommentId),
+        eq(prInteractions.installationId, input.installationId),
+      ),
+    )
     .limit(1);
 
   return { interaction: existing ?? null, created: false };
@@ -1973,7 +2030,7 @@ export async function claimInteractionRunning(
       and(
         eq(prInteractions.id, interactionId),
         eq(prInteractions.installationId, installationId),
-        eq(prInteractions.status, "queued"),
+        inArray(prInteractions.status, ["queued", "failed"]),
       ),
     )
     .returning();
