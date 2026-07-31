@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
 import {
+  DAILY_CONVERSATION_CAP,
   LEARNING_GUIDANCE_MAX_CHARS,
   MAX_ACTIVE_LEARNINGS_PER_REPO,
 } from "@/lib/config/constants";
@@ -12,6 +13,7 @@ import { db as defaultDb } from "./client";
 import {
   findingFeedback,
   installations,
+  prInteractions,
   repositories,
   repositoryLearningAudits,
   repositoryLearnings,
@@ -1847,4 +1849,316 @@ export async function reconcileFindings(
     findings: results.slice(0, findingQueries.length).flat(),
     resolved: results.at(-1) ?? [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Feature 33 — PR conversation interactions (metadata only)
+// ---------------------------------------------------------------------------
+
+export type QueuedInteractionInput = {
+  installationId: number;
+  repositoryId: number;
+  prNumber: number;
+  sourceCommentId: number;
+};
+
+export type QueuedInteractionResult = {
+  interaction: typeof prInteractions.$inferSelect | null;
+  created: boolean;
+  reason?: "daily_cap";
+};
+
+/**
+ * Idempotent insert keyed by source_comment_id. Never stores comment body.
+ */
+export async function createQueuedInteraction(
+  input: QueuedInteractionInput,
+  database: Database = defaultDb,
+): Promise<QueuedInteractionResult> {
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const startOfNextDay = new Date(startOfDay);
+  startOfNextDay.setUTCDate(startOfNextDay.getUTCDate() + 1);
+
+  type QueueDecision = {
+    id: string | null;
+    created: boolean;
+    reason: string | null;
+  };
+  const decisionResult = await database.execute<QueueDecision>(sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(42::int, ${input.installationId}::int)
+    ),
+    existing AS (
+      SELECT interaction.id
+      FROM pr_interactions AS interaction, locked
+      WHERE interaction.source_comment_id = ${input.sourceCommentId}
+        AND interaction.installation_id = ${input.installationId}
+    ),
+    capacity AS (
+      SELECT count(*) < ${DAILY_CONVERSATION_CAP} AS available
+      FROM pr_interactions AS interaction, locked
+      WHERE interaction.installation_id = ${input.installationId}
+        AND interaction.created_at >= ${startOfDay}
+        AND interaction.created_at < ${startOfNextDay}
+        AND interaction.status <> 'skipped'
+    ),
+    eligible AS (
+      SELECT 1
+      FROM repositories AS repository, capacity
+      WHERE repository.id = ${input.repositoryId}
+        AND repository.installation_id = ${input.installationId}
+        AND capacity.available
+        AND NOT EXISTS (SELECT 1 FROM existing)
+    ),
+    inserted AS (
+      INSERT INTO pr_interactions (
+        installation_id,
+        repository_id,
+        pr_number,
+        source_comment_id,
+        status
+      )
+      SELECT
+        ${input.installationId},
+        ${input.repositoryId},
+        ${input.prNumber},
+        ${input.sourceCommentId},
+        'queued'
+      FROM eligible
+      ON CONFLICT (source_comment_id) DO NOTHING
+      RETURNING id
+    )
+    SELECT inserted.id, true AS created, NULL::text AS reason
+    FROM inserted
+    UNION ALL
+    SELECT existing.id, false AS created, NULL::text AS reason
+    FROM existing
+    UNION ALL
+    SELECT NULL::uuid, false AS created, 'daily_cap' AS reason
+    FROM capacity
+    WHERE NOT capacity.available
+      AND NOT EXISTS (SELECT 1 FROM existing)
+      AND EXISTS (
+        SELECT 1
+        FROM repositories AS repository
+        WHERE repository.id = ${input.repositoryId}
+          AND repository.installation_id = ${input.installationId}
+      )
+    LIMIT 1
+  `);
+
+  const decision = decisionResult.rows[0];
+  if (!decision) return { interaction: null, created: false };
+  if (decision.reason === "daily_cap") {
+    return { interaction: null, created: false, reason: "daily_cap" };
+  }
+  if (!decision.id) return { interaction: null, created: false };
+
+  const [interaction] = await database
+    .select()
+    .from(prInteractions)
+    .where(
+      and(
+        eq(prInteractions.id, decision.id),
+        eq(prInteractions.installationId, input.installationId),
+      ),
+    )
+    .limit(1);
+
+  return { interaction: interaction ?? null, created: decision.created };
+}
+
+export async function createSkippedInteraction(
+  input: QueuedInteractionInput & { error: string },
+  database: Database = defaultDb,
+): Promise<QueuedInteractionResult> {
+  const [repository] = await database
+    .select({ id: repositories.id })
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.id, input.repositoryId),
+        eq(repositories.installationId, input.installationId),
+      ),
+    )
+    .limit(1);
+  if (!repository) {
+    return { interaction: null, created: false };
+  }
+
+  const [inserted] = await database
+    .insert(prInteractions)
+    .values({
+      installationId: input.installationId,
+      repositoryId: input.repositoryId,
+      prNumber: input.prNumber,
+      sourceCommentId: input.sourceCommentId,
+      status: "skipped",
+      error: input.error,
+    })
+    .onConflictDoNothing({
+      target: prInteractions.sourceCommentId,
+    })
+    .returning();
+
+  if (inserted) return { interaction: inserted, created: true };
+
+  const [existing] = await database
+    .select()
+    .from(prInteractions)
+    .where(
+      and(
+        eq(prInteractions.sourceCommentId, input.sourceCommentId),
+        eq(prInteractions.installationId, input.installationId),
+      ),
+    )
+    .limit(1);
+
+  return { interaction: existing ?? null, created: false };
+}
+
+export async function claimInteractionRunning(
+  installationId: number,
+  interactionId: string,
+  database: Database = defaultDb,
+) {
+  const [interaction] = await database
+    .update(prInteractions)
+    .set({ status: "running", updatedAt: new Date() })
+    .where(
+      and(
+        eq(prInteractions.id, interactionId),
+        eq(prInteractions.installationId, installationId),
+        inArray(prInteractions.status, ["queued", "failed"]),
+      ),
+    )
+    .returning();
+  return interaction ?? null;
+}
+
+export async function markInteractionCompleted(
+  installationId: number,
+  interactionId: string,
+  options: {
+    model?: string | null;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    durationMs?: number | null;
+  } = {},
+  database: Database = defaultDb,
+) {
+  const [interaction] = await database
+    .update(prInteractions)
+    .set({
+      status: "completed",
+      model: options.model ?? null,
+      inputTokens: options.inputTokens ?? null,
+      outputTokens: options.outputTokens ?? null,
+      durationMs: options.durationMs ?? null,
+      error: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(prInteractions.id, interactionId),
+        eq(prInteractions.installationId, installationId),
+        inArray(prInteractions.status, ["queued", "running"]),
+      ),
+    )
+    .returning();
+  return interaction ?? null;
+}
+
+export async function markInteractionFailed(
+  installationId: number,
+  interactionId: string,
+  error: string,
+  database: Database = defaultDb,
+) {
+  const [interaction] = await database
+    .update(prInteractions)
+    .set({
+      status: "failed",
+      error,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(prInteractions.id, interactionId),
+        eq(prInteractions.installationId, installationId),
+        inArray(prInteractions.status, ["queued", "running"]),
+      ),
+    )
+    .returning();
+  return interaction ?? null;
+}
+
+export async function markInteractionSkipped(
+  installationId: number,
+  interactionId: string,
+  error: string,
+  database: Database = defaultDb,
+) {
+  const [interaction] = await database
+    .update(prInteractions)
+    .set({
+      status: "skipped",
+      error,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(prInteractions.id, interactionId),
+        eq(prInteractions.installationId, installationId),
+        inArray(prInteractions.status, ["queued", "running"]),
+      ),
+    )
+    .returning();
+  return interaction ?? null;
+}
+
+export async function getInteractionById(
+  installationId: number,
+  interactionId: string,
+  database: Database = defaultDb,
+) {
+  const [interaction] = await database
+    .select()
+    .from(prInteractions)
+    .where(
+      and(
+        eq(prInteractions.id, interactionId),
+        eq(prInteractions.installationId, installationId),
+      ),
+    )
+    .limit(1);
+  return interaction ?? null;
+}
+
+/** Count non-skipped conversation interactions since UTC midnight. */
+export async function countConversationsToday(
+  installationId: number,
+  now = new Date(),
+  database: Database = defaultDb,
+) {
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const startOfNextDay = new Date(startOfDay);
+  startOfNextDay.setUTCDate(startOfNextDay.getUTCDate() + 1);
+
+  const rows = await database
+    .select({ id: prInteractions.id })
+    .from(prInteractions)
+    .where(
+      and(
+        eq(prInteractions.installationId, installationId),
+        gte(prInteractions.createdAt, startOfDay),
+        lt(prInteractions.createdAt, startOfNextDay),
+        ne(prInteractions.status, "skipped"),
+      ),
+    );
+
+  return rows.length;
 }

@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   installationEventSchema,
   installationRepositoriesEventSchema,
+  issueCommentEventSchema,
+  issueCommentIsPullRequest,
   pullRequestEventSchema,
   pullRequestReviewCommentEventSchema,
 } from "@/lib/github/events";
+import { conversationJobSchema } from "@/lib/review/conversation-job";
 import { feedbackJobSchema } from "@/lib/review/feedback-job";
 import { reviewJobSchema } from "@/lib/review/job";
 import {
@@ -114,6 +117,58 @@ describe("GitHub boundary schemas", () => {
 });
 
 describe("review boundary schemas", () => {
+  it("parses issue_comment events and detects PR issues", () => {
+    const prComment = issueCommentEventSchema.parse({
+      action: "created",
+      installation: { id: 42 },
+      repository: { id: 100, full_name: "owner/repo" },
+      issue: {
+        number: 7,
+        pull_request: { url: "https://api.github.com/repos/owner/repo/pulls/7" },
+        user: { login: "author", type: "User" },
+      },
+      comment: {
+        id: 9001,
+        body: "@diffguard hello",
+        user: { login: "reviewer", type: "User" },
+      },
+      sender: { login: "reviewer" },
+    });
+    expect(issueCommentIsPullRequest(prComment)).toBe(true);
+
+    const issueOnly = issueCommentEventSchema.parse({
+      action: "created",
+      installation: { id: 42 },
+      repository: { id: 100, full_name: "owner/repo" },
+      issue: {
+        number: 8,
+        user: { login: "author", type: "User" },
+      },
+      comment: {
+        id: 9002,
+        body: "@diffguard hello",
+        user: { login: "reviewer", type: "User" },
+      },
+    });
+    expect(issueCommentIsPullRequest(issueOnly)).toBe(false);
+  });
+
+  it("parses a valid QStash conversation job", () => {
+    expect(
+      conversationJobSchema.parse({
+        installationId: 42,
+        repositoryId: 100,
+        repoFullName: "owner/repo",
+        prNumber: 7,
+        sourceCommentId: 9001,
+        actorLogin: "reviewer",
+        prAuthorLogin: "author",
+        deliveryId: "delivery-1",
+        interactionId: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).toMatchObject({ sourceCommentId: 9001 });
+  });
+
   it("parses a valid QStash feedback job", () => {
     expect(
       feedbackJobSchema.parse({

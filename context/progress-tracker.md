@@ -8,8 +8,8 @@ Update this file after every meaningful implementation change.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Features 22 and 24
   are implemented with acceptance verification still pending, Feature 23 is
-  underway, Features 25–26 and 28–32 (findings through learnings governance)
-  are implemented, and Features 33–34 remain.
+  underway, Features 25–26 and 28–33 (findings through conversation boundary)
+  are implemented, and Feature 34 remains as the final chat feature.
 
 ## Current Goal
 
@@ -325,6 +325,23 @@ Update this file after every meaningful implementation change.
   last-modified columns. Migration `0009_learning_governance.sql` (applied to
   Neon). Access and mutation tests pass. Remaining: dogfood governance flows
   in the dashboard after deploy.
+- Feature 33 (PR Conversation Boundary) — implementation completed 2026-07-31:
+  `issue_comment` webhook schema (PR-only), leading `@diffguard` mention
+  filter, signed conversation QStash job + `/api/jobs/conversation` worker,
+  `pr_interactions` metadata table (unique source comment id), installation/
+  PR/actor rate limits + daily conversation cap independent of reviews,
+  permission re-check, deleted-comment and inaccessible-PR skips, ephemeral
+  thread fetch (discarded), boundary ack without LLM. Migration
+  `0010_pr_interactions.sql` (applied to Neon). Remaining: enable GitHub App
+  `Issues: read` + `Issues: write`, subscribe to `issue_comment`, dogfood on
+  scratch install before beta re-approval.
+- PR #63 review feedback fixes — implementation completed 2026-07-31:
+  queued conversation interactions are republished after publish failures,
+  worker claims are exclusive with failed-attempt recovery, current GitHub
+  comment/PR authors are revalidated, skipped-interaction reads are tenant
+  scoped, and daily-cap reservation is serialized per installation. Focused
+  conversation trigger, worker, and GitHub client tests pass; full verification
+  remains to run on the fix branch.
 
 ## In Progress
 
@@ -347,7 +364,9 @@ Update this file after every meaningful implementation change.
      scratch PR with measurable acceptance criteria;
    - Feature 30: dogfood valid + false-positive signals on a scratch PR;
    - Feature 31–32: dogfood remember + dashboard edit/archive/reactivate;
-   - Features 33–34: PR-scoped AI conversation as the final feature.
+   - Feature 33: GitHub App Issues permissions + `issue_comment` subscription,
+     then dogfood boundary ack on a scratch PR;
+   - Feature 34: PR-scoped AI chat and review controls (final feature).
 
 ## Open Questions
 

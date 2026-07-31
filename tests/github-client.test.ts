@@ -493,6 +493,15 @@ describe("GitHub client", () => {
     ).resolves.toBe("none");
   });
 
+  it("returns the current pull request author for conversation authorization", async () => {
+    const { client, request } = createMockClient();
+    request.mockResolvedValueOnce({ data: { user: { login: "author" } } });
+
+    await expect(
+      client.fetchPullRequestAccessibility(42, "owner/repo", 7),
+    ).resolves.toEqual({ status: "accessible", authorLogin: "author" });
+  });
+
   it("verifies that an inline comment belongs to the requested PR", async () => {
     const { client, request } = createMockClient();
 

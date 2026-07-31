@@ -37,4 +37,17 @@ export const MAX_ACTIVE_LEARNINGS_PER_REPO = 25;
  * Combined with other sections under REVIEW_PROMPT_TOKEN_BUDGET.
  */
 export const LEARNINGS_PROMPT_TOKEN_CAP = 1_000;
+/**
+ * Feature 33 conversation boundary rate limits (independent of review caps).
+ * Upstash sliding windows; keys are installation / PR / actor scoped.
+ */
+export const CONVERSATION_INSTALLATION_RATE_LIMIT = 20;
+export const CONVERSATION_PR_RATE_LIMIT = 10;
+export const CONVERSATION_ACTOR_RATE_LIMIT = 5;
+/** Hard daily conversation interactions per installation (non-skipped). */
+export const DAILY_CONVERSATION_CAP = 50;
+/** Max issue comments loaded as ephemeral thread context (discarded after use). */
+export const CONVERSATION_THREAD_COMMENT_CAP = 20;
+/** Max characters per thread comment body kept in memory. */
+export const CONVERSATION_THREAD_BODY_CHAR_LIMIT = 2_000;
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

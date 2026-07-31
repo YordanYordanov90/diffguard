@@ -82,3 +82,43 @@ export type InstallationRepositoriesEvent = z.infer<
 export type PullRequestReviewCommentEvent = z.infer<
   typeof pullRequestReviewCommentEventSchema
 >;
+
+/**
+ * Minimal fields for Feature 33 PR conversation boundary.
+ * Only newly created comments on pull-request issues are processed.
+ */
+export const issueCommentEventSchema = z.object({
+  action: z.string(),
+  installation: installationIdSchema,
+  repository: repositorySchema,
+  issue: z.object({
+    number: z.number().int().positive(),
+    /** Present only when the issue is a pull request. */
+    pull_request: z
+      .object({
+        url: z.string().url().optional(),
+      })
+      .passthrough()
+      .optional(),
+    user: z.object({
+      login: z.string().min(1),
+      type: z.string().min(1),
+    }),
+  }),
+  comment: z.object({
+    id: z.number().int().positive(),
+    body: z.string(),
+    user: z.object({
+      login: z.string().min(1),
+      type: z.string().min(1),
+    }),
+  }),
+});
+
+export type IssueCommentEvent = z.infer<typeof issueCommentEventSchema>;
+
+export function issueCommentIsPullRequest(
+  event: Pick<IssueCommentEvent, "issue">,
+): boolean {
+  return event.issue.pull_request !== undefined;
+}

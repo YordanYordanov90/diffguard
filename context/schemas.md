@@ -22,6 +22,7 @@ IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
 LearningAuditAction = "edited" | "archived" | "reactivated"
+InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -558,27 +559,22 @@ implemented above). They are the shape source of truth when each numbered featur
 begins. Move each contract into the implemented sections above, and update the
 matching Zod/Drizzle code in the same increment.
 
-### Planned enums
-
-```ts
-InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
-```
-
-### Implemented: FeedbackAction, LearningStatus, IssueAssessmentStatus
+### Implemented enums (Features 30–33)
 
 ```ts
 FeedbackAction        = "valid" | "dismiss" | "false_positive"
 LearningStatus        = "active" | "archived"
 LearningAuditAction   = "edited" | "archived" | "reactivated"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
+InteractionStatus     = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-### pr_interactions (Feature 33)
+### pr_interactions (Feature 33) — implemented
 
 ```ts
 id                uuid PK DEFAULT gen_random_uuid()
-installation_id   bigint NOT NULL FK
-repository_id     bigint NOT NULL FK -> repositories.id
+installation_id   bigint NOT NULL FK -> installations.id (cascade)
+repository_id     bigint NOT NULL FK -> repositories.id (cascade)
 pr_number         integer NOT NULL
 source_comment_id bigint NOT NULL
 status            InteractionStatus NOT NULL DEFAULT "queued"
@@ -586,16 +582,54 @@ model             text NULL
 input_tokens      integer NULL
 output_tokens     integer NULL
 duration_ms       integer NULL
-error             text NULL
+error             text NULL   // safe skip/fail reason only
 created_at        timestamptz NOT NULL DEFAULT now()
 updated_at        timestamptz NOT NULL DEFAULT now()
 
 UNIQUE (source_comment_id)
 INDEX  (installation_id, created_at)
+INDEX  (installation_id, repository_id, pr_number)
 ```
 
 Question text, answer text, comment-thread content, diffs, and source files are
-never persisted.
+never persisted. Feature 33 workers complete without an LLM answer; Feature 34
+fills model/token fields when chat is enabled.
+
+### Conversation job (Zod — `lib/review/conversation-job.ts`, Feature 33)
+
+```ts
+ConversationJob = {
+  installationId:   number
+  repositoryId:     number
+  repoFullName:     string
+  prNumber:         number
+  sourceCommentId:  number
+  actorLogin:       string
+  prAuthorLogin:    string
+  deliveryId:       string
+  interactionId:    string  // uuid of pr_interactions row
+}
+```
+
+### IssueCommentEvent (Zod — Feature 33)
+
+```ts
+IssueCommentEvent = {
+  action: string   // only "created" processed
+  installation: { id: number }
+  repository:   { id: number, full_name: string }
+  issue: {
+    number: number
+    pull_request?: { url?: string }  // presence => PR
+    user: { login: string, type: string }
+  }
+  comment: {
+    id: number
+    body: string
+    user: { login: string, type: string }
+  }
+}
+```
 
 ### pr_review_controls (Feature 34)
 
