@@ -1288,39 +1288,6 @@ export async function listActiveRepositoryLearnings(
   }));
 }
 
-function learningAuditSource(
-  input: {
-    learningId: string;
-    installationId: number;
-    repositoryId: number;
-    actorLogin: string;
-    action: LearningAuditAction;
-    status?: LearningStatus;
-  },
-  mutationAt: Date,
-  database: Database,
-) {
-  return database
-    .select({
-      learningId: repositoryLearnings.id,
-      installationId: repositoryLearnings.installationId,
-      repositoryId: repositoryLearnings.repositoryId,
-      actorLogin: sql<string>`${input.actorLogin}`.as("actor_login"),
-      action: sql<LearningAuditAction>`${input.action}`.as("action"),
-    })
-    .from(repositoryLearnings)
-    .where(
-      and(
-        eq(repositoryLearnings.id, input.learningId),
-        eq(repositoryLearnings.installationId, input.installationId),
-        eq(repositoryLearnings.repositoryId, input.repositoryId),
-        eq(repositoryLearnings.lastModifiedAt, mutationAt),
-        eq(repositoryLearnings.lastAction, input.action),
-        input.status ? eq(repositoryLearnings.status, input.status) : undefined,
-      ),
-    );
-}
-
 export type DashboardLearningRow = {
   id: string;
   installationId: number;
@@ -1566,23 +1533,45 @@ export async function archiveRepositoryLearning(
     return learning ?? null;
   }
 
-  const appendAudit = database
-    .insert(repositoryLearningAudits)
-    .select(
-      learningAuditSource(
-        {
-          learningId,
-          installationId,
-          repositoryId,
-          actorLogin,
-          action: "archived",
-        },
-        now,
-        database,
-      ),
-    );
-  const [learningRows] = await database.batch([updateLearning, appendAudit]);
-  return learningRows[0] ?? null;
+  const mutationRows = await database.execute<{ id: string }>(sql`
+    WITH updated AS (
+      UPDATE ${repositoryLearnings}
+      SET
+        ${sql.identifier("status")} = ${"archived"}::learning_status,
+        ${sql.identifier("archived_at")} = ${now},
+        ${sql.identifier("updated_at")} = ${now},
+        ${sql.identifier("last_modified_by")} = ${actorLogin},
+        ${sql.identifier("last_modified_at")} = ${now},
+        ${sql.identifier("last_action")} = ${"archived"}::learning_audit_action
+      WHERE ${repositoryLearnings.id} = ${learningId}
+        AND ${repositoryLearnings.installationId} = ${installationId}
+        AND ${repositoryLearnings.repositoryId} = ${repositoryId}
+        AND ${repositoryLearnings.status} = ${"active"}::learning_status
+      RETURNING ${repositoryLearnings.id},
+        ${repositoryLearnings.installationId},
+        ${repositoryLearnings.repositoryId}
+    ), audit AS (
+      INSERT INTO ${repositoryLearningAudits} (
+        ${sql.identifier("learning_id")},
+        ${sql.identifier("installation_id")},
+        ${sql.identifier("repository_id")},
+        ${sql.identifier("actor_login")},
+        ${sql.identifier("action")}
+      )
+      SELECT id, installation_id, repository_id, ${actorLogin}, ${"archived"}::learning_audit_action
+      FROM updated
+    )
+    SELECT id FROM updated
+  `);
+  const learningIdFromMutation = mutationRows.rows[0]?.id;
+  if (!learningIdFromMutation) return null;
+
+  const [learning] = await database
+    .select()
+    .from(repositoryLearnings)
+    .where(eq(repositoryLearnings.id, learningIdFromMutation))
+    .limit(1);
+  return learning ?? null;
 }
 
 /**
@@ -1686,30 +1675,49 @@ export async function reactivateRepositoryLearning(
     return { status: "reactivated", learning: learningRows[0] };
   }
 
-  const appendAudit = database
-    .insert(repositoryLearningAudits)
-    .select(
-      learningAuditSource(
-        {
-          learningId,
-          installationId,
-          repositoryId,
-          actorLogin,
-          action: "reactivated",
-          status: "active",
-        },
-        now,
-        database,
-      ),
-    );
-  const [learningRows, archivedRows] = await database.batch([
-    updateLearning,
-    enforceQuota,
-    appendAudit,
-  ]);
-  if (!learningRows[0]) return { status: "not_found" };
+  const mutationRows = await database.execute<{ id: string }>(sql`
+    WITH reactivated AS (
+      UPDATE ${repositoryLearnings}
+      SET
+        ${sql.identifier("status")} = ${"active"}::learning_status,
+        ${sql.identifier("archived_at")} = NULL,
+        ${sql.identifier("updated_at")} = ${now},
+        ${sql.identifier("last_modified_by")} = ${actorLogin},
+        ${sql.identifier("last_modified_at")} = ${now},
+        ${sql.identifier("last_action")} = ${"reactivated"}::learning_audit_action
+      WHERE ${repositoryLearnings.id} = ${learningId}
+        AND ${repositoryLearnings.installationId} = ${installationId}
+        AND ${repositoryLearnings.repositoryId} = ${repositoryId}
+        AND ${repositoryLearnings.status} = ${"archived"}::learning_status
+      RETURNING ${repositoryLearnings.id},
+        ${repositoryLearnings.installationId},
+        ${repositoryLearnings.repositoryId}
+    ), audit AS (
+      INSERT INTO ${repositoryLearningAudits} (
+        ${sql.identifier("learning_id")},
+        ${sql.identifier("installation_id")},
+        ${sql.identifier("repository_id")},
+        ${sql.identifier("actor_login")},
+        ${sql.identifier("action")}
+      )
+      SELECT id, installation_id, repository_id, ${actorLogin}, ${"reactivated"}::learning_audit_action
+      FROM reactivated
+    )
+    SELECT id FROM reactivated
+  `);
+  const learningIdFromMutation = mutationRows.rows[0]?.id;
+  if (!learningIdFromMutation) return { status: "not_found" };
+
+  const archivedRows = await enforceQuota;
   if (archivedRows.length > 0) return { status: "quota_exceeded" };
-  return { status: "reactivated", learning: learningRows[0] };
+
+  const [learning] = await database
+    .select()
+    .from(repositoryLearnings)
+    .where(eq(repositoryLearnings.id, learningIdFromMutation))
+    .limit(1);
+  if (!learning) return { status: "not_found" };
+  return { status: "reactivated", learning };
 }
 
 /**

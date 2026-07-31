@@ -73,6 +73,8 @@ async function authorizeLearningMutation(learningId: string) {
 
     let permission: string;
     try {
+      // GitHub exposes no permission-version token. Keep this check immediately
+      // before the tenant/repository-scoped mutation; the query reasserts both ids.
       permission = await getCollaboratorPermission(
         learning.installationId,
         learning.repositoryFullName,
