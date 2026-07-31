@@ -860,14 +860,6 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     );
     const prompt = buildReviewPrompt({ ...promptContext, ...fittedContext });
     const generated = await dependencies.generateReview(prompt, { model }, { deadline: llmDeadline });
-    // Aggregate-only usage: ids supplied to the model, never guidance text.
-    if (repositoryLearnings.length > 0) {
-      await dependencies.queries.recordRepositoryLearningUsage(
-        job.installationId,
-        job.repositoryId,
-        repositoryLearnings.map((learning) => learning.id),
-      );
-    }
     const generatedOutput = parseCandidateOutput(generated.output);
     const generatedCandidates = generatedOutput.candidates;
     const linkedIssueAssessments = reconcileLinkedIssueAssessments(
@@ -1126,6 +1118,21 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       outputTokens: totalUsage.outputTokens,
       durationMs: Date.now() - reviewStartedAt,
     });
+
+    // Aggregate-only usage after terminal completion so failures/retries never
+    // re-run the paid model path. Best-effort: never fail a completed review.
+    if (repositoryLearnings.length > 0) {
+      try {
+        await dependencies.queries.recordRepositoryLearningUsage(
+          job.installationId,
+          job.repositoryId,
+          repositoryLearnings.map((learning) => learning.id),
+        );
+      } catch {
+        // Intentionally ignored — counters are non-critical telemetry.
+      }
+    }
+
     for (const finding of reconciliation.resolved) {
       if (finding.githubCommentId === null || finding.resolutionRepliedAt !== null) continue;
       const commentIsInScope = await dependencies.github.verifyPullRequestReviewCommentScope(
