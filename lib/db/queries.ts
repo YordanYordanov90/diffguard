@@ -1886,7 +1886,7 @@ export async function createQueuedInteraction(
     created: boolean;
     reason: string | null;
   };
-  const [decision] = await database.execute<QueueDecision>(sql`
+  const decisionResult = await database.execute<QueueDecision>(sql`
     WITH locked AS (
       SELECT pg_advisory_xact_lock(42::int, ${input.installationId}::int)
     ),
@@ -1949,6 +1949,7 @@ export async function createQueuedInteraction(
     LIMIT 1
   `);
 
+  const decision = decisionResult.rows[0];
   if (!decision) return { interaction: null, created: false };
   if (decision.reason === "daily_cap") {
     return { interaction: null, created: false, reason: "daily_cap" };

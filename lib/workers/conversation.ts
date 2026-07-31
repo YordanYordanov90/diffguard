@@ -164,7 +164,7 @@ async function processConversationJob(
     );
     return { status: "skipped" as const, reason: "comment_deleted" };
   }
-  if (sourceComment.status === "unavailable") {
+  if (sourceComment.status !== "fetched") {
     await dependencies.queries.markInteractionFailed(
       job.installationId,
       job.interactionId,
