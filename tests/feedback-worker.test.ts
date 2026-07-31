@@ -303,6 +303,29 @@ describe("feedback worker", () => {
     );
   });
 
+  it("acknowledges duplicate remember commands without claiming a new save", async () => {
+    const dependencies = createDependencies({
+      permission: "write",
+      createLearning: { status: "duplicate", learning: { id: "learning-1" } },
+    });
+    const job: FeedbackJob = {
+      ...baseJob,
+      action: "remember",
+      reason: "Treat sibling keyboard controls as intentional UX.",
+    };
+
+    const response = await handleFeedbackWorker(signedRequest(job), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.replyToPullRequestReviewComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      7001,
+      "Repository preference already exists.",
+    );
+  });
+
   it("ignores unauthorized remember attempts", async () => {
     const dependencies = createDependencies({ permission: "read" });
     const job: FeedbackJob = {

@@ -55,7 +55,10 @@ export function parseFeedbackCommand(body: string): FeedbackCommand | null {
 }
 
 /** Short acknowledgement never includes internal ids or permission details. */
-export function feedbackAcknowledgement(action: FeedbackCommandAction): string {
+export function feedbackAcknowledgement(
+  action: FeedbackCommandAction,
+  outcome: "created" | "duplicate" = "created",
+): string {
   switch (action) {
     case "valid":
       return "Recorded as useful. Thanks for the signal.";
@@ -64,7 +67,9 @@ export function feedbackAcknowledgement(action: FeedbackCommandAction): string {
     case "false_positive":
       return "Recorded as false positive and dismissed.";
     case "remember":
-      return "Saved repository preference.";
+      return outcome === "duplicate"
+        ? "Repository preference already exists."
+        : "Saved repository preference.";
   }
 }
 

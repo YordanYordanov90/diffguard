@@ -132,6 +132,7 @@ async function acknowledge(
   job: FeedbackJob,
   dependencies: FeedbackWorkerDependencies,
   action: FeedbackJobAction,
+  outcome: "created" | "duplicate" = "created",
 ) {
   try {
     // GitHub only accepts replies under the top-level review comment, not
@@ -141,7 +142,7 @@ async function acknowledge(
       job.repoFullName,
       job.prNumber,
       job.parentCommentId,
-      feedbackAcknowledgement(action),
+      feedbackAcknowledgement(action, outcome),
     );
   } catch {
     // State is already durable; acknowledgement is best-effort.
@@ -176,8 +177,7 @@ async function processRememberJob(
     return { status: "ignored" as const, reason: "quota_exceeded" };
   }
   if (result.status === "duplicate") {
-    // Prefer acknowledging so the collaborator knows the preference is already stored.
-    await acknowledge(job, dependencies, "remember");
+    await acknowledge(job, dependencies, "remember", "duplicate");
     return { status: "duplicate" as const, kind: "learning" as const };
   }
 
