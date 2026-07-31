@@ -1,8 +1,29 @@
 import { z } from "zod";
 
-import { FEEDBACK_REASON_MAX_CHARS } from "@/lib/config/constants";
+import {
+  FEEDBACK_REASON_MAX_CHARS,
+  LEARNING_GUIDANCE_MAX_CHARS,
+} from "@/lib/config/constants";
 
-export const feedbackActionSchema = z.enum(["valid", "dismiss", "false_positive"]);
+/** Persisted finding_feedback actions (Feature 30). */
+export const feedbackActionSchema = z.enum([
+  "valid",
+  "dismiss",
+  "false_positive",
+]);
+
+/** Job actions include remember (Feature 31), which creates a learning only. */
+export const feedbackJobActionSchema = z.enum([
+  "valid",
+  "dismiss",
+  "false_positive",
+  "remember",
+]);
+
+const reasonMaxChars = Math.max(
+  FEEDBACK_REASON_MAX_CHARS,
+  LEARNING_GUIDANCE_MAX_CHARS,
+);
 
 export const feedbackJobSchema = z.object({
   installationId: z.number().int().positive(),
@@ -15,10 +36,11 @@ export const feedbackJobSchema = z.object({
   sourceCommentId: z.number().int().positive(),
   actorLogin: z.string().min(1).max(100),
   prAuthorLogin: z.string().min(1).max(100),
-  action: feedbackActionSchema,
-  reason: z.string().min(1).max(FEEDBACK_REASON_MAX_CHARS).nullable(),
+  action: feedbackJobActionSchema,
+  reason: z.string().min(1).max(reasonMaxChars).nullable(),
   deliveryId: z.string().min(1),
 });
 
 export type FeedbackJob = z.infer<typeof feedbackJobSchema>;
 export type FeedbackAction = z.infer<typeof feedbackActionSchema>;
+export type FeedbackJobAction = z.infer<typeof feedbackJobActionSchema>;

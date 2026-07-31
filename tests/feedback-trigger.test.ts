@@ -54,6 +54,37 @@ describe("feedback trigger", () => {
     });
   });
 
+  it("queues remember commands for write-capable processing", async () => {
+    const publishJSON = vi.fn().mockResolvedValue(undefined);
+    const handle = createFeedbackTriggerHandler({
+      qstash: { publishJSON },
+      feedbackWorkerUrl: "https://example.com/api/jobs/feedback",
+    });
+
+    await expect(
+      handle(
+        baseEvent({
+          comment: {
+            id: 9002,
+            body: "@diffguard remember: Prefer explicit tenant checks.",
+            user: { login: "maintainer", type: "User" },
+            in_reply_to_id: 7001,
+          },
+        }),
+        "delivery-2",
+      ),
+    ).resolves.toEqual({ status: "queued" });
+
+    expect(publishJSON).toHaveBeenCalledWith({
+      url: "https://example.com/api/jobs/feedback",
+      body: expect.objectContaining({
+        action: "remember",
+        reason: "Prefer explicit tenant checks.",
+        sourceCommentId: 9002,
+      }),
+    });
+  });
+
   it("ignores edits, deletes, bots, non-replies, and free-form text", async () => {
     const publishJSON = vi.fn();
     const handle = createFeedbackTriggerHandler({

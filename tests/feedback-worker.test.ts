@@ -39,6 +39,7 @@ function createDependencies(
     permission?: "admin" | "maintain" | "write" | "triage" | "read" | "none";
     recorded?: boolean;
     dismissed?: boolean;
+    createLearning?: unknown;
   } = {},
 ) {
   return {
@@ -57,6 +58,12 @@ function createDependencies(
         recorded: overrides.recorded ?? true,
         dismissed: overrides.dismissed ?? false,
       }),
+      createRepositoryLearning: vi.fn().mockResolvedValue(
+        overrides.createLearning ?? {
+          status: "created",
+          learning: { id: "learning-1" },
+        },
+      ),
     },
     github: {
       getCollaboratorPermission: vi
@@ -83,7 +90,7 @@ describe("actorMayRecordFeedback", () => {
     );
   });
 
-  it("requires write/maintain/admin for dismiss and false-positive", () => {
+  it("requires write/maintain/admin for dismiss, false-positive, and remember", () => {
     expect(
       actorMayRecordFeedback("dismiss", "write", "dev", "author"),
     ).toBe(true);
@@ -91,7 +98,7 @@ describe("actorMayRecordFeedback", () => {
       actorMayRecordFeedback("false_positive", "maintain", "maint", "author"),
     ).toBe(true);
     expect(
-      actorMayRecordFeedback("dismiss", "admin", "admin", "author"),
+      actorMayRecordFeedback("remember", "admin", "admin", "author"),
     ).toBe(true);
     expect(
       actorMayRecordFeedback("dismiss", "read", "reader", "author"),
@@ -101,6 +108,9 @@ describe("actorMayRecordFeedback", () => {
     ).toBe(false);
     expect(
       actorMayRecordFeedback("false_positive", "none", "author", "author"),
+    ).toBe(false);
+    expect(
+      actorMayRecordFeedback("remember", "read", "author", "author"),
     ).toBe(false);
   });
 });
@@ -253,5 +263,102 @@ describe("feedback worker", () => {
       7,
       7001,
     );
+  });
+
+  it("creates a repository learning from remember without dismissing", async () => {
+    const dependencies = createDependencies({ permission: "write" });
+    const job: FeedbackJob = {
+      ...baseJob,
+      action: "remember",
+      reason: "Treat sibling keyboard controls as intentional UX.",
+    };
+
+    const response = await handleFeedbackWorker(signedRequest(job), dependencies);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      data: {
+        status: "recorded",
+        action: "remember",
+        learningId: "learning-1",
+      },
+      error: null,
+    });
+    expect(dependencies.queries.createRepositoryLearning).toHaveBeenCalledWith({
+      installationId: 42,
+      repositoryId: 100,
+      guidance: "Treat sibling keyboard controls as intentional UX.",
+      createdBy: "reviewer",
+      sourceFindingId: "finding-1",
+      sourceCommentId: 9001,
+    });
+    expect(dependencies.queries.recordFindingFeedback).not.toHaveBeenCalled();
+    expect(dependencies.github.replyToPullRequestReviewComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      7001,
+      "Saved repository preference.",
+    );
+  });
+
+  it("acknowledges duplicate remember commands without claiming a new save", async () => {
+    const dependencies = createDependencies({
+      permission: "write",
+      createLearning: { status: "duplicate", learning: { id: "learning-1" } },
+    });
+    const job: FeedbackJob = {
+      ...baseJob,
+      action: "remember",
+      reason: "Treat sibling keyboard controls as intentional UX.",
+    };
+
+    const response = await handleFeedbackWorker(signedRequest(job), dependencies);
+
+    expect(response.status).toBe(200);
+    expect(dependencies.github.replyToPullRequestReviewComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      7001,
+      "Repository preference already exists.",
+    );
+  });
+
+  it("ignores unauthorized remember attempts", async () => {
+    const dependencies = createDependencies({ permission: "read" });
+    const job: FeedbackJob = {
+      ...baseJob,
+      action: "remember",
+      reason: "Prefer REST.",
+    };
+
+    const response = await handleFeedbackWorker(signedRequest(job), dependencies);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      data: { status: "ignored", reason: "unauthorized" },
+      error: null,
+    });
+    expect(dependencies.queries.createRepositoryLearning).not.toHaveBeenCalled();
+  });
+
+  it("does not create a learning from false-positive alone", async () => {
+    const dependencies = createDependencies({
+      permission: "write",
+      dismissed: true,
+    });
+    const job: FeedbackJob = {
+      ...baseJob,
+      action: "false_positive",
+      reason: "intentional sibling control",
+    };
+
+    await handleFeedbackWorker(signedRequest(job), dependencies);
+
+    expect(dependencies.queries.createRepositoryLearning).not.toHaveBeenCalled();
+    expect(dependencies.queries.recordFindingFeedback).toHaveBeenCalled();
   });
 });

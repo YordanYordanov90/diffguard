@@ -1,6 +1,7 @@
 export * from "./job";
 export * from "./feedback-job";
 export * from "./feedback-command";
+export * from "./learnings";
 export * from "./schema";
 export * from "./diff";
 export * from "./baseline";

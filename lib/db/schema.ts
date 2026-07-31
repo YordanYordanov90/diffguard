@@ -99,6 +99,13 @@ export const feedbackActionEnum = pgEnum("feedback_action", [
 
 export type FeedbackAction = (typeof feedbackActionEnum.enumValues)[number];
 
+export const learningStatusEnum = pgEnum("learning_status", [
+  "active",
+  "archived",
+]);
+
+export type LearningStatus = (typeof learningStatusEnum.enumValues)[number];
+
 export const installations = pgTable("installations", {
   id: bigint("id", { mode: "number" }).primaryKey(),
   accountLogin: text("account_login").notNull(),
@@ -291,6 +298,51 @@ export const findingFeedback = pgTable(
       table.installationId,
       table.repositoryId,
       table.prNumber,
+    ),
+  ],
+);
+
+/**
+ * Explicit collaborator repository preferences (Feature 31).
+ * Never stores source code, diffs, or conversation history.
+ */
+export const repositoryLearnings = pgTable(
+  "repository_learnings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    installationId: bigint("installation_id", { mode: "number" })
+      .notNull()
+      .references(() => installations.id, { onDelete: "cascade" }),
+    repositoryId: bigint("repository_id", { mode: "number" })
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    guidance: text("guidance").notNull(),
+    contentHash: text("content_hash").notNull(),
+    status: learningStatusEnum("status").notNull().default("active"),
+    createdBy: text("created_by").notNull(),
+    sourceFindingId: uuid("source_finding_id").references(() => reviewFindings.id, {
+      onDelete: "set null",
+    }),
+    sourceCommentId: bigint("source_comment_id", { mode: "number" }),
+    usageCount: integer("usage_count").notNull().default(0),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("repository_learnings_repository_content_hash_unique").on(
+      table.repositoryId,
+      table.contentHash,
+    ),
+    index("repository_learnings_tenant_repo_status_idx").on(
+      table.installationId,
+      table.repositoryId,
+      table.status,
     ),
   ],
 );

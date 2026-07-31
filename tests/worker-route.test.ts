@@ -56,6 +56,8 @@ function createDependencies(
       markFindingResolutionReplied: vi.fn().mockResolvedValue({ id: "finding-1" }),
       claimFindingResolutionReply: vi.fn().mockResolvedValue({ id: "finding-1" }),
       releaseFindingResolutionReply: vi.fn().mockResolvedValue(null),
+      listActiveRepositoryLearnings: vi.fn().mockResolvedValue([]),
+      recordRepositoryLearningUsage: vi.fn().mockResolvedValue(0),
       ...overrides,
     },
     github: {

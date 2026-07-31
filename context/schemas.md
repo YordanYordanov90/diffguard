@@ -20,6 +20,7 @@ FindingDecision   = "confirmed" | "rejected" | "manual_verification"
 FindingLifecycle  = "open" | "resolved" | "dismissed"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
+LearningStatus    = "active" | "archived"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -163,6 +164,34 @@ INDEX  (installation_id, repository_id, pr_number)
 `false_positive`; it is null for `valid`. Arbitrary thread history is never
 stored. False-positive rows are candidates for offline golden evaluation only;
 they never auto-promote into repository instructions.
+
+### repository_learnings (Feature 31)
+
+```ts
+id                uuid PK DEFAULT gen_random_uuid()
+installation_id   bigint NOT NULL FK -> installations.id (cascade)
+repository_id     bigint NOT NULL FK -> repositories.id (cascade)
+guidance          text NOT NULL
+content_hash      text NOT NULL       // trusted normalized SHA-256
+status            LearningStatus NOT NULL DEFAULT "active"
+created_by        text NOT NULL
+source_finding_id uuid NULL FK -> review_findings.id (set null)
+source_comment_id bigint NULL
+usage_count       integer NOT NULL DEFAULT 0
+last_used_at      timestamptz NULL
+archived_at       timestamptz NULL
+created_at        timestamptz NOT NULL DEFAULT now()
+updated_at        timestamptz NOT NULL DEFAULT now()
+
+UNIQUE (repository_id, content_hash)
+INDEX  (installation_id, repository_id, status)
+```
+
+Initial scope is repository-only. Guidance is bounded (≤500 chars), stored as
+plain text, and always treated as untrusted add-only prompt context. Active
+quota: 25 per repository. Created only by explicit
+`@diffguard remember: <preference>` with write/maintain/admin permission.
+Archive by default (Feature 32 owns governance UI).
 
 ### Inline review comments (Feature 26 — runtime, not a table)
 
@@ -427,14 +456,16 @@ FeedbackJob = {
   sourceCommentId:  number  // idempotency key for finding_feedback
   actorLogin:       string
   prAuthorLogin:    string
-  action:           FeedbackAction
+  action:           FeedbackAction | "remember"
   reason:           string | null  // null for valid; required otherwise
   deliveryId:       string
 }
 ```
 
 Deterministic commands (no LLM): `@diffguard valid`,
-`@diffguard dismiss: <reason>`, `@diffguard false-positive: <reason>`.
+`@diffguard dismiss: <reason>`, `@diffguard false-positive: <reason>`,
+`@diffguard remember: <preference>` (Feature 31; creates a learning only,
+never a `finding_feedback` row).
 
 ## Prompt Context Assembly (shape, not schema)
 
@@ -463,6 +494,10 @@ PromptContext = {
     title: string
     body: string | null
   }[]                          // explicit closing refs only, delimited untrusted
+  repositoryLearnings: {
+    id: string
+    guidance: string
+  }[]                          // active prefs only, delimited untrusted, ≤1k tokens
 }
 ```
 
@@ -500,41 +535,16 @@ matching Zod/Drizzle code in the same increment.
 ### Planned enums
 
 ```ts
-LearningStatus    = "active" | "archived"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-### Implemented: FeedbackAction (Feature 30) and IssueAssessmentStatus (Feature 29)
+### Implemented: FeedbackAction, LearningStatus, IssueAssessmentStatus
 
 ```ts
 FeedbackAction        = "valid" | "dismiss" | "false_positive"
+LearningStatus        = "active" | "archived"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 ```
-
-### repository_learnings (Feature 31)
-
-```ts
-id                uuid PK DEFAULT gen_random_uuid()
-installation_id   bigint NOT NULL FK
-repository_id     bigint NOT NULL FK -> repositories.id
-guidance          text NOT NULL
-content_hash      text NOT NULL       // trusted normalized SHA-256
-status            LearningStatus NOT NULL DEFAULT "active"
-created_by        text NOT NULL
-source_finding_id uuid NULL FK -> review_findings.id
-source_comment_id bigint NULL
-usage_count       integer NOT NULL DEFAULT 0
-last_used_at      timestamptz NULL
-archived_at       timestamptz NULL
-created_at        timestamptz NOT NULL DEFAULT now()
-updated_at        timestamptz NOT NULL DEFAULT now()
-
-UNIQUE (repository_id, content_hash)
-INDEX  (installation_id, repository_id, status)
-```
-
-Initial scope is repository-only. Guidance is bounded, stored as plain text,
-and always treated as untrusted add-only prompt context.
 
 ### pr_interactions (Feature 33)
 
@@ -646,18 +656,6 @@ verdict. Candidate summary/verdict text is never published directly. All
 strings and arrays receive explicit Zod length limits in the implementing
 feature. Candidate ids, finding-update ids, and issue numbers are checked
 against server-built allowlists after schema validation.
-
-### Planned prompt context additions (Feature 31)
-
-```ts
-PromptContextV2 = PromptContext & {
-  // linkedIssues implemented above (Feature 29)
-  repositoryLearnings: {
-    id: string
-    guidance: string
-  }[]
-}
-```
 
 Every content-bearing section is independently delimited and labeled
 untrusted. Token budgets apply to the combined prompt, not independently in a

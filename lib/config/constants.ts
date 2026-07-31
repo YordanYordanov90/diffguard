@@ -28,4 +28,13 @@ export const LINKED_ISSUE_BODY_CHAR_LIMIT = 4_000;
 export const FEEDBACK_REASON_MAX_CHARS = 500;
 /** Deterministic mention used by collaborator feedback commands (Feature 30). */
 export const FEEDBACK_COMMAND_MENTION = "@diffguard";
+/** Max characters for a single repository learning preference (Feature 31). */
+export const LEARNING_GUIDANCE_MAX_CHARS = 500;
+/** Max active learnings stored per repository. */
+export const MAX_ACTIVE_LEARNINGS_PER_REPO = 25;
+/**
+ * Approximate token budget for repository learnings in the review prompt.
+ * Combined with other sections under REVIEW_PROMPT_TOKEN_BUDGET.
+ */
+export const LEARNINGS_PROMPT_TOKEN_CAP = 1_000;
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

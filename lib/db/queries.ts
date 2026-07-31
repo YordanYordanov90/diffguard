@@ -1,10 +1,19 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 
+import {
+  LEARNING_GUIDANCE_MAX_CHARS,
+  MAX_ACTIVE_LEARNINGS_PER_REPO,
+} from "@/lib/config/constants";
+import {
+  computeLearningContentHash,
+  isValidActiveLearning,
+} from "@/lib/review/learnings";
 import { db as defaultDb } from "./client";
 import {
   findingFeedback,
   installations,
   repositories,
+  repositoryLearnings,
   reviewFindings,
   reviews,
   type FeedbackAction,
@@ -1079,6 +1088,354 @@ export async function recordFindingFeedback(
     recorded: (insertedRows as { id: string }[]).length > 0,
     dismissed: (dismissedRows as { id: string }[]).length > 0,
   };
+}
+
+export type CreateRepositoryLearningInput = {
+  installationId: number;
+  repositoryId: number;
+  guidance: string;
+  createdBy: string;
+  sourceFindingId?: string | null;
+  sourceCommentId?: number | null;
+};
+
+export type CreateRepositoryLearningResult =
+  | { status: "created"; learning: typeof repositoryLearnings.$inferSelect }
+  | { status: "duplicate"; learning: typeof repositoryLearnings.$inferSelect | null }
+  | { status: "quota_exceeded" }
+  | { status: "invalid_guidance" }
+  | { status: "repository_not_found" };
+
+/**
+ * Active-quota predicate shared by insert/reactivate race guards.
+ * Ranking by (created_at, id) keeps the oldest MAX_ACTIVE_LEARNINGS_PER_REPO.
+ */
+function learningOverActiveQuotaSql(
+  installationId: number,
+  repositoryId: number,
+) {
+  return sql`(
+    SELECT COUNT(*)::int
+    FROM repository_learnings AS peers
+    WHERE peers.installation_id = ${installationId}
+      AND peers.repository_id = ${repositoryId}
+      AND peers.status = 'active'
+      AND (peers.created_at, peers.id) <= (
+        ${repositoryLearnings.createdAt},
+        ${repositoryLearnings.id}
+      )
+  ) > ${MAX_ACTIVE_LEARNINGS_PER_REPO}`;
+}
+
+/**
+ * If a concurrent insert pushed this row past the active quota, delete it.
+ * Safe for brand-new rows only (content_hash must not remain occupied).
+ */
+async function deleteLearningIfOverQuota(
+  installationId: number,
+  repositoryId: number,
+  learningId: string,
+  database: Database,
+): Promise<boolean> {
+  const [deleted] = await database
+    .delete(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+        learningOverActiveQuotaSql(installationId, repositoryId),
+      ),
+    )
+    .returning({ id: repositoryLearnings.id });
+  return deleted !== undefined;
+}
+
+/**
+ * If reactivating would exceed the active quota under concurrency, soft-archive
+ * the row again so history is preserved.
+ */
+async function archiveLearningIfOverQuota(
+  installationId: number,
+  repositoryId: number,
+  learningId: string,
+  database: Database,
+): Promise<boolean> {
+  const now = new Date();
+  const [archived] = await database
+    .update(repositoryLearnings)
+    .set({
+      status: "archived",
+      archivedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+        learningOverActiveQuotaSql(installationId, repositoryId),
+      ),
+    )
+    .returning({ id: repositoryLearnings.id });
+  return archived !== undefined;
+}
+
+/**
+ * Persist an explicit collaborator preference for a repository.
+ * Duplicate content hashes and active quotas never create a second active row.
+ * Quota is enforced after insert so concurrent remember jobs cannot overshoot.
+ */
+export async function createRepositoryLearning(
+  input: CreateRepositoryLearningInput,
+  database: Database = defaultDb,
+): Promise<CreateRepositoryLearningResult> {
+  const guidance = input.guidance.trim();
+  if (!guidance || guidance.length > LEARNING_GUIDANCE_MAX_CHARS) {
+    return { status: "invalid_guidance" };
+  }
+
+  const [repository] = await database
+    .select({ id: repositories.id })
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.id, input.repositoryId),
+        eq(repositories.installationId, input.installationId),
+      ),
+    )
+    .limit(1);
+  if (!repository) return { status: "repository_not_found" };
+
+  const contentHash = computeLearningContentHash(guidance);
+
+  // Fast path for exact duplicates (any status) before counting/inserting.
+  const [existingBefore] = await database
+    .select()
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.installationId, input.installationId),
+        eq(repositoryLearnings.repositoryId, input.repositoryId),
+        eq(repositoryLearnings.contentHash, contentHash),
+      ),
+    )
+    .limit(1);
+  if (existingBefore) {
+    return { status: "duplicate", learning: existingBefore };
+  }
+
+  // Best-effort pre-check to avoid unnecessary inserts under load.
+  const activeCountRows = await database
+    .select({ id: repositoryLearnings.id })
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.installationId, input.installationId),
+        eq(repositoryLearnings.repositoryId, input.repositoryId),
+        eq(repositoryLearnings.status, "active"),
+      ),
+    );
+  if (activeCountRows.length >= MAX_ACTIVE_LEARNINGS_PER_REPO) {
+    return { status: "quota_exceeded" };
+  }
+
+  const [inserted] = await database
+    .insert(repositoryLearnings)
+    .values({
+      installationId: input.installationId,
+      repositoryId: input.repositoryId,
+      guidance,
+      contentHash,
+      status: "active",
+      createdBy: input.createdBy,
+      sourceFindingId: input.sourceFindingId ?? null,
+      sourceCommentId: input.sourceCommentId ?? null,
+    })
+    .onConflictDoNothing({
+      target: [repositoryLearnings.repositoryId, repositoryLearnings.contentHash],
+    })
+    .returning();
+
+  if (!inserted) {
+    const [existing] = await database
+      .select()
+      .from(repositoryLearnings)
+      .where(
+        and(
+          eq(repositoryLearnings.installationId, input.installationId),
+          eq(repositoryLearnings.repositoryId, input.repositoryId),
+          eq(repositoryLearnings.contentHash, contentHash),
+        ),
+      )
+      .limit(1);
+    return { status: "duplicate", learning: existing ?? null };
+  }
+
+  const overQuota = await deleteLearningIfOverQuota(
+    input.installationId,
+    input.repositoryId,
+    inserted.id,
+    database,
+  );
+  if (overQuota) return { status: "quota_exceeded" };
+
+  return { status: "created", learning: inserted };
+}
+
+/**
+ * Load active learnings for a tenant repository. Revalidates bounds on every load.
+ */
+export async function listActiveRepositoryLearnings(
+  installationId: number,
+  repositoryId: number,
+  database: Database = defaultDb,
+) {
+  const rows = await database
+    .select({
+      id: repositoryLearnings.id,
+      guidance: repositoryLearnings.guidance,
+      status: repositoryLearnings.status,
+    })
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+      ),
+    )
+    .orderBy(asc(repositoryLearnings.createdAt))
+    .limit(MAX_ACTIVE_LEARNINGS_PER_REPO);
+
+  return rows.filter(isValidActiveLearning).map((row) => ({
+    id: row.id,
+    guidance: row.guidance.trim(),
+  }));
+}
+
+export async function archiveRepositoryLearning(
+  installationId: number,
+  repositoryId: number,
+  learningId: string,
+  database: Database = defaultDb,
+) {
+  const now = new Date();
+  const [learning] = await database
+    .update(repositoryLearnings)
+    .set({
+      status: "archived",
+      archivedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+      ),
+    )
+    .returning();
+  return learning ?? null;
+}
+
+/**
+ * Reactivate an archived learning when under the active quota.
+ * Post-reactivation eviction closes concurrent overshoot races.
+ */
+export async function reactivateRepositoryLearning(
+  installationId: number,
+  repositoryId: number,
+  learningId: string,
+  database: Database = defaultDb,
+): Promise<
+  | { status: "reactivated"; learning: typeof repositoryLearnings.$inferSelect }
+  | { status: "not_found" }
+  | { status: "quota_exceeded" }
+> {
+  const activeCountRows = await database
+    .select({ id: repositoryLearnings.id })
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+      ),
+    );
+  if (activeCountRows.length >= MAX_ACTIVE_LEARNINGS_PER_REPO) {
+    return { status: "quota_exceeded" };
+  }
+
+  const now = new Date();
+  const [learning] = await database
+    .update(repositoryLearnings)
+    .set({
+      status: "active",
+      archivedAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "archived"),
+      ),
+    )
+    .returning();
+
+  if (!learning) return { status: "not_found" };
+
+  const overQuota = await archiveLearningIfOverQuota(
+    installationId,
+    repositoryId,
+    learning.id,
+    database,
+  );
+  if (overQuota) {
+    // Row was active only briefly; keep it archived and reject.
+    return { status: "quota_exceeded" };
+  }
+
+  return { status: "reactivated", learning };
+}
+
+/**
+ * Aggregate-only usage counters for learnings included in a review prompt.
+ * Never logs guidance text.
+ */
+export async function recordRepositoryLearningUsage(
+  installationId: number,
+  repositoryId: number,
+  learningIds: string[],
+  database: Database = defaultDb,
+) {
+  if (learningIds.length === 0) return 0;
+
+  const uniqueIds = [...new Set(learningIds)];
+  const now = new Date();
+  const updated = await database
+    .update(repositoryLearnings)
+    .set({
+      usageCount: sql`${repositoryLearnings.usageCount} + 1`,
+      lastUsedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+        inArray(repositoryLearnings.id, uniqueIds),
+      ),
+    )
+    .returning({ id: repositoryLearnings.id });
+
+  return updated.length;
 }
 
 export async function upsertConfirmedFindings(
