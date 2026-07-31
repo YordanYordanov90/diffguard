@@ -3,10 +3,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   installationEventSchema,
   installationRepositoriesEventSchema,
+  issueCommentEventSchema,
   pullRequestEventSchema,
   pullRequestReviewCommentEventSchema,
   type InstallationEvent,
   type InstallationRepositoriesEvent,
+  type IssueCommentEvent,
   type PullRequestEvent,
   type PullRequestReviewCommentEvent,
 } from "@/lib/github/events";
@@ -16,11 +18,16 @@ import {
 } from "@/lib/github/webhook-handlers";
 import { handlePullRequest } from "@/lib/github/review-trigger";
 import { handlePullRequestReviewComment } from "@/lib/github/feedback-trigger";
+import { handleIssueComment } from "@/lib/github/conversation-trigger";
 
 export type WebhookHandlers = {
   handlePullRequest: (event: PullRequestEvent, deliveryId: string) => void | Promise<void>;
   handlePullRequestReviewComment: (
     event: PullRequestReviewCommentEvent,
+    deliveryId: string,
+  ) => void | Promise<void>;
+  handleIssueComment: (
+    event: IssueCommentEvent,
     deliveryId: string,
   ) => void | Promise<void>;
   handleInstallation: (event: InstallationEvent, deliveryId: string) => void | Promise<void>;
@@ -36,6 +43,9 @@ const defaultHandlers: WebhookHandlers = {
   },
   handlePullRequestReviewComment: async (event, deliveryId) => {
     await handlePullRequestReviewComment(event, deliveryId);
+  },
+  handleIssueComment: async (event, deliveryId) => {
+    await handleIssueComment(event, deliveryId);
   },
   handleInstallation,
   handleInstallationRepos,
@@ -74,6 +84,11 @@ function parseEvent(eventName: string, payload: unknown) {
         kind: eventName,
         event: pullRequestReviewCommentEventSchema.parse(payload),
       };
+    case "issue_comment":
+      return {
+        kind: eventName,
+        event: issueCommentEventSchema.parse(payload),
+      };
     case "installation":
       return { kind: eventName, event: installationEventSchema.parse(payload) };
     case "installation_repositories":
@@ -99,6 +114,8 @@ async function dispatch(
     await handlers.handlePullRequest(parsed.event, deliveryId);
   } else if (parsed.kind === "pull_request_review_comment") {
     await handlers.handlePullRequestReviewComment(parsed.event, deliveryId);
+  } else if (parsed.kind === "issue_comment") {
+    await handlers.handleIssueComment(parsed.event, deliveryId);
   } else if (parsed.kind === "installation") {
     await handlers.handleInstallation(parsed.event, deliveryId);
   } else {

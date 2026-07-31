@@ -112,6 +112,14 @@ const collaboratorPermissionSchema = z.object({
   permission: z.enum(["admin", "maintain", "write", "triage", "read", "none"]),
 });
 
+const issueCommentSchema = z.object({
+  id: z.number().int().positive(),
+  body: z.string(),
+  user: z.object({
+    login: z.string().min(1),
+  }),
+});
+
 const pullRequestReviewReplySchema = z.object({
   id: z.number().int().positive(),
   in_reply_to_id: z.number().int().positive().nullable().optional(),
@@ -821,6 +829,122 @@ export function createGitHubClient(
         throw error;
       }
     },
+
+    /**
+     * Fetch a single issue comment by id (Feature 33). Bodies are not persisted.
+     */
+    async fetchIssueComment(
+      installationId: number,
+      repoFullName: string,
+      commentId: number,
+    ): Promise<
+      | { status: "fetched"; id: number; body: string; userLogin: string }
+      | { status: "missing" | "unavailable" }
+    > {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/issues/comments/{comment_id}",
+          { owner, repo, comment_id: commentId },
+        );
+        const parsed = issueCommentSchema.safeParse(response.data);
+        if (!parsed.success) return { status: "unavailable" };
+        return {
+          status: "fetched",
+          id: parsed.data.id,
+          body: parsed.data.body,
+          userLogin: parsed.data.user.login,
+        };
+      } catch (error) {
+        if (isNotFound(error)) return { status: "missing" };
+        if (isForbidden(error)) return { status: "unavailable" };
+        throw error;
+      }
+    },
+
+    /**
+     * Confirm the PR still exists and is reachable with the installation token.
+     */
+    async fetchPullRequestAccessibility(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+    ): Promise<{ status: "accessible" | "missing" | "unavailable" }> {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+          owner,
+          repo,
+          pull_number: prNumber,
+        });
+        return { status: "accessible" };
+      } catch (error) {
+        if (isNotFound(error)) return { status: "missing" };
+        if (isForbidden(error)) return { status: "unavailable" };
+        throw error;
+      }
+    },
+
+    /**
+     * List recent issue comments on a PR for ephemeral thread context.
+     * Callers must discard bodies after the request (Feature 33).
+     */
+    async listIssueComments(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+    ): Promise<
+      | {
+          status: "fetched";
+          comments: { id: number; body: string; userLogin: string }[];
+        }
+      | { status: "unavailable" }
+    > {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: prNumber,
+            per_page: 100,
+          },
+        );
+        const parsed = z.array(issueCommentSchema).safeParse(response.data);
+        if (!parsed.success) return { status: "unavailable" };
+        return {
+          status: "fetched",
+          comments: parsed.data.map((comment) => ({
+            id: comment.id,
+            body: comment.body,
+            userLogin: comment.user.login,
+          })),
+        };
+      } catch (error) {
+        if (isNotFound(error) || isForbidden(error)) return { status: "unavailable" };
+        throw error;
+      }
+    },
+
+    /** Post a new issue comment on a PR (Feature 33 boundary ack / Feature 34 replies). */
+    async createIssueComment(
+      installationId: number,
+      repoFullName: string,
+      prNumber: number,
+      body: string,
+    ): Promise<number> {
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      const response = await octokit.request(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+        { owner, repo, issue_number: prNumber, body },
+      );
+      return z.object({ id: z.number().int().positive() }).parse(response.data).id;
+    },
   };
 }
 
@@ -881,6 +1005,18 @@ export const githubClient = {
   getCollaboratorPermission: (
     ...args: Parameters<GitHubClient["getCollaboratorPermission"]>
   ) => getDefaultClient().getCollaboratorPermission(...args),
+  fetchIssueComment: (
+    ...args: Parameters<GitHubClient["fetchIssueComment"]>
+  ) => getDefaultClient().fetchIssueComment(...args),
+  fetchPullRequestAccessibility: (
+    ...args: Parameters<GitHubClient["fetchPullRequestAccessibility"]>
+  ) => getDefaultClient().fetchPullRequestAccessibility(...args),
+  listIssueComments: (
+    ...args: Parameters<GitHubClient["listIssueComments"]>
+  ) => getDefaultClient().listIssueComments(...args),
+  createIssueComment: (
+    ...args: Parameters<GitHubClient["createIssueComment"]>
+  ) => getDefaultClient().createIssueComment(...args),
 };
 
 export const {
@@ -901,4 +1037,8 @@ export const {
   listPullRequestReviewComments,
   getUserInstallations,
   getCollaboratorPermission,
+  fetchIssueComment,
+  fetchPullRequestAccessibility,
+  listIssueComments,
+  createIssueComment,
 } = githubClient;

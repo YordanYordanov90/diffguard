@@ -77,6 +77,7 @@ describe("GitHub webhook route", () => {
       {
         handlePullRequest,
         handlePullRequestReviewComment: vi.fn(),
+        handleIssueComment: vi.fn(),
         handleInstallation: vi.fn(),
         handleInstallationRepos: vi.fn(),
       },
@@ -137,6 +138,7 @@ describe("GitHub webhook route", () => {
       {
         handlePullRequest: vi.fn(),
         handlePullRequestReviewComment,
+        handleIssueComment: vi.fn(),
         handleInstallation: vi.fn(),
         handleInstallationRepos: vi.fn(),
       },
@@ -147,6 +149,40 @@ describe("GitHub webhook route", () => {
       payload,
       "delivery-1",
     );
+  });
+
+  it("validates and dispatches issue_comment events", async () => {
+    const handleIssueComment = vi.fn();
+    const payload = {
+      action: "created",
+      installation: { id: 42 },
+      repository: { id: 100, full_name: "owner/repo" },
+      issue: {
+        number: 7,
+        pull_request: { url: "https://api.github.com/repos/owner/repo/pulls/7" },
+        user: { login: "author", type: "User" },
+      },
+      comment: {
+        id: 9001,
+        body: "@diffguard explain auth",
+        user: { login: "reviewer", type: "User" },
+      },
+    };
+
+    const response = await handleGitHubWebhook(
+      signedRequest(JSON.stringify(payload), "issue_comment"),
+      secret,
+      {
+        handlePullRequest: vi.fn(),
+        handlePullRequestReviewComment: vi.fn(),
+        handleIssueComment,
+        handleInstallation: vi.fn(),
+        handleInstallationRepos: vi.fn(),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleIssueComment).toHaveBeenCalledWith(payload, "delivery-1");
   });
 
   it("returns 400 for a signed but malformed review comment payload", async () => {

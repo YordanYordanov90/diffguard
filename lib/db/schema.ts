@@ -115,6 +115,17 @@ export const learningAuditActionEnum = pgEnum("learning_audit_action", [
 export type LearningAuditAction =
   (typeof learningAuditActionEnum.enumValues)[number];
 
+export const interactionStatusEnum = pgEnum("interaction_status", [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "skipped",
+]);
+
+export type InteractionStatus =
+  (typeof interactionStatusEnum.enumValues)[number];
+
 export const installations = pgTable("installations", {
   id: bigint("id", { mode: "number" }).primaryKey(),
   accountLogin: text("account_login").notNull(),
@@ -391,6 +402,50 @@ export const repositoryLearningAudits = pgTable(
     index("repository_learning_audits_tenant_repo_idx").on(
       table.installationId,
       table.repositoryId,
+    ),
+  ],
+);
+
+/**
+ * PR conversation interaction metadata (Feature 33).
+ * Never stores question text, answer text, diffs, or source content.
+ */
+export const prInteractions = pgTable(
+  "pr_interactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    installationId: bigint("installation_id", { mode: "number" })
+      .notNull()
+      .references(() => installations.id, { onDelete: "cascade" }),
+    repositoryId: bigint("repository_id", { mode: "number" })
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    prNumber: integer("pr_number").notNull(),
+    sourceCommentId: bigint("source_comment_id", { mode: "number" }).notNull(),
+    status: interactionStatusEnum("status").notNull().default("queued"),
+    model: text("model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    durationMs: integer("duration_ms"),
+    /** Safe operational error/skip reason only — never question/answer text. */
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("pr_interactions_source_comment_id_unique").on(table.sourceCommentId),
+    index("pr_interactions_installation_created_at_idx").on(
+      table.installationId,
+      table.createdAt,
+    ),
+    index("pr_interactions_tenant_pr_idx").on(
+      table.installationId,
+      table.repositoryId,
+      table.prNumber,
     ),
   ],
 );
