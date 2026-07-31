@@ -35,67 +35,74 @@ const learningIdOnlySchema = z.object({
 const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
 async function authorizeLearningMutation(learningId: string) {
-  const { userId } = await auth();
-  if (!userId) {
-    return {
-      ok: false as const,
-      error: "Unauthorized",
-    };
-  }
-
-  const access = await getDashboardAccess();
-  if (access.status === "github-authorization-required") {
-    return {
-      ok: false as const,
-      error: "GitHub authorization is required.",
-    };
-  }
-
-  const learning = await getRepositoryLearningByIdForInstallations(
-    learningId,
-    access.installationIds,
-  );
-  if (!learning) {
-    return {
-      ok: false as const,
-      error: "Learning not found.",
-    };
-  }
-
-  const actorLogin = await getSignedInGitHubLogin();
-  if (!actorLogin) {
-    return {
-      ok: false as const,
-      error: "GitHub identity is required to change learnings.",
-    };
-  }
-
-  let permission: string;
   try {
-    permission = await getCollaboratorPermission(
-      learning.installationId,
-      learning.repositoryFullName,
-      actorLogin,
+    const { userId } = await auth();
+    if (!userId) {
+      return {
+        ok: false as const,
+        error: "Unauthorized",
+      };
+    }
+
+    const access = await getDashboardAccess();
+    if (access.status === "github-authorization-required") {
+      return {
+        ok: false as const,
+        error: "GitHub authorization is required.",
+      };
+    }
+
+    const learning = await getRepositoryLearningByIdForInstallations(
+      learningId,
+      access.installationIds,
     );
+    if (!learning) {
+      return {
+        ok: false as const,
+        error: "Learning not found.",
+      };
+    }
+
+    const actorLogin = await getSignedInGitHubLogin();
+    if (!actorLogin) {
+      return {
+        ok: false as const,
+        error: "GitHub identity is required to change learnings.",
+      };
+    }
+
+    let permission: string;
+    try {
+      permission = await getCollaboratorPermission(
+        learning.installationId,
+        learning.repositoryFullName,
+        actorLogin,
+      );
+    } catch {
+      return {
+        ok: false as const,
+        error: "Repository permission could not be verified.",
+      };
+    }
+
+    if (!WRITE_PERMISSIONS.has(permission)) {
+      return {
+        ok: false as const,
+        error: "You need write access on this repository to change learnings.",
+      };
+    }
+
+    return {
+      ok: true as const,
+      learning,
+      actorLogin,
+    };
   } catch {
     return {
       ok: false as const,
-      error: "Repository permission could not be verified.",
+      error: "Authorization could not be verified.",
     };
   }
-
-  if (!WRITE_PERMISSIONS.has(permission)) {
-    return {
-      ok: false as const,
-      error: "You need write access on this repository to change learnings.",
-    };
-  }
-
-  return {
-    ok: true as const,
-    learning,
-    actorLogin,
-  };
 }
 
 function revalidateLearnings() {

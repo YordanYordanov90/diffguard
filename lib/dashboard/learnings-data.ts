@@ -19,6 +19,8 @@ function toDashboardLearning(row: DashboardLearningRow): DashboardLearning {
   return {
     id: row.id,
     installationId: row.installationId,
+    installationAccountLogin: row.installationAccountLogin,
+    installationAccountType: row.installationAccountType,
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,
     guidance: row.guidance,
@@ -50,7 +52,12 @@ export async function getDashboardLearnings(): Promise<DashboardLearningsResult>
     const rows = await listRepositoryLearningsByInstallations(
       access.installationIds,
     );
-    const learnings = rows.map(toDashboardLearning);
+    const installationsById = new Map(
+      access.installations.map((installation) => [installation.id, installation]),
+    );
+    const learnings = rows
+      .filter((row) => installationsById.has(row.installationId))
+      .map(toDashboardLearning);
     const repositories = [
       ...new Set(learnings.map((learning) => learning.repositoryFullName)),
     ].sort((a, b) => a.localeCompare(b));

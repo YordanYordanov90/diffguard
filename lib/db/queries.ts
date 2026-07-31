@@ -1156,37 +1156,6 @@ async function deleteLearningIfOverQuota(
 }
 
 /**
- * If reactivating would exceed the active quota under concurrency, soft-archive
- * the row again so history is preserved.
- */
-async function archiveLearningIfOverQuota(
-  installationId: number,
-  repositoryId: number,
-  learningId: string,
-  database: Database,
-): Promise<boolean> {
-  const now = new Date();
-  const [archived] = await database
-    .update(repositoryLearnings)
-    .set({
-      status: "archived",
-      archivedAt: now,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(repositoryLearnings.id, learningId),
-        eq(repositoryLearnings.installationId, installationId),
-        eq(repositoryLearnings.repositoryId, repositoryId),
-        eq(repositoryLearnings.status, "active"),
-        learningOverActiveQuotaSql(installationId, repositoryId),
-      ),
-    )
-    .returning({ id: repositoryLearnings.id });
-  return archived !== undefined;
-}
-
-/**
  * Persist an explicit collaborator preference for a repository.
  * Duplicate content hashes and active quotas never create a second active row.
  * Quota is enforced after insert so concurrent remember jobs cannot overshoot.
@@ -1319,28 +1288,44 @@ export async function listActiveRepositoryLearnings(
   }));
 }
 
-async function appendLearningAudit(
+function learningAuditSource(
   input: {
     learningId: string;
     installationId: number;
     repositoryId: number;
     actorLogin: string;
     action: LearningAuditAction;
+    status?: LearningStatus;
   },
+  mutationAt: Date,
   database: Database,
 ) {
-  await database.insert(repositoryLearningAudits).values({
-    learningId: input.learningId,
-    installationId: input.installationId,
-    repositoryId: input.repositoryId,
-    actorLogin: input.actorLogin,
-    action: input.action,
-  });
+  return database
+    .select({
+      learningId: repositoryLearnings.id,
+      installationId: repositoryLearnings.installationId,
+      repositoryId: repositoryLearnings.repositoryId,
+      actorLogin: sql<string>`${input.actorLogin}`.as("actor_login"),
+      action: sql<LearningAuditAction>`${input.action}`.as("action"),
+    })
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.id, input.learningId),
+        eq(repositoryLearnings.installationId, input.installationId),
+        eq(repositoryLearnings.repositoryId, input.repositoryId),
+        eq(repositoryLearnings.lastModifiedAt, mutationAt),
+        eq(repositoryLearnings.lastAction, input.action),
+        input.status ? eq(repositoryLearnings.status, input.status) : undefined,
+      ),
+    );
 }
 
 export type DashboardLearningRow = {
   id: string;
   installationId: number;
+  installationAccountLogin: string;
+  installationAccountType: string;
   repositoryId: number;
   repositoryFullName: string;
   guidance: string;
@@ -1373,6 +1358,8 @@ export async function listRepositoryLearningsByInstallations(
     .select({
       id: repositoryLearnings.id,
       installationId: repositoryLearnings.installationId,
+      installationAccountLogin: installations.accountLogin,
+      installationAccountType: installations.accountType,
       repositoryId: repositoryLearnings.repositoryId,
       repositoryFullName: repositories.fullName,
       guidance: repositoryLearnings.guidance,
@@ -1397,6 +1384,10 @@ export async function listRepositoryLearningsByInstallations(
         eq(repositories.id, repositoryLearnings.repositoryId),
         eq(repositories.installationId, repositoryLearnings.installationId),
       ),
+    )
+    .innerJoin(
+      installations,
+      eq(installations.id, repositoryLearnings.installationId),
     )
     .leftJoin(
       reviewFindings,
@@ -1495,7 +1486,7 @@ export async function updateRepositoryLearningGuidance(
     .limit(1);
   if (hashOwner) return { status: "duplicate" };
 
-  const [learning] = await database
+  const updateLearning = database
     .update(repositoryLearnings)
     .set({
       guidance: trimmed,
@@ -1514,18 +1505,24 @@ export async function updateRepositoryLearningGuidance(
     )
     .returning();
 
+  const appendAudit = database
+    .insert(repositoryLearningAudits)
+    .select(
+      learningAuditSource(
+        {
+          learningId,
+          installationId,
+          repositoryId,
+          actorLogin,
+          action: "edited",
+        },
+        now,
+        database,
+      ),
+    );
+  const [learningRows] = await database.batch([updateLearning, appendAudit]);
+  const learning = learningRows[0];
   if (!learning) return { status: "not_found" };
-
-  await appendLearningAudit(
-    {
-      learningId,
-      installationId,
-      repositoryId,
-      actorLogin,
-      action: "edited",
-    },
-    database,
-  );
 
   return { status: "updated", learning };
 }
@@ -1539,7 +1536,7 @@ export async function archiveRepositoryLearning(
 ) {
   const actorLogin = options.actorLogin;
   const now = new Date();
-  const [learning] = await database
+  const updateLearning = database
     .update(repositoryLearnings)
     .set({
       status: "archived",
@@ -1563,20 +1560,28 @@ export async function archiveRepositoryLearning(
     )
     .returning();
 
-  if (learning && actorLogin) {
-    await appendLearningAudit(
-      {
-        learningId,
-        installationId,
-        repositoryId,
-        actorLogin,
-        action: "archived",
-      },
-      database,
-    );
+  if (!actorLogin) {
+    const [learning] = await updateLearning;
+    return learning ?? null;
   }
 
-  return learning ?? null;
+  const appendAudit = database
+    .insert(repositoryLearningAudits)
+    .select(
+      learningAuditSource(
+        {
+          learningId,
+          installationId,
+          repositoryId,
+          actorLogin,
+          action: "archived",
+        },
+        now,
+        database,
+      ),
+    );
+  const [learningRows] = await database.batch([updateLearning, appendAudit]);
+  return learningRows[0] ?? null;
 }
 
 /**
@@ -1595,6 +1600,21 @@ export async function reactivateRepositoryLearning(
   | { status: "quota_exceeded" }
 > {
   const actorLogin = options.actorLogin;
+  const [target] = await database
+    .select({ status: repositoryLearnings.status })
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+      ),
+    )
+    .limit(1);
+  if (!target || target.status !== "archived") {
+    return { status: "not_found" };
+  }
+
   const activeCountRows = await database
     .select({ id: repositoryLearnings.id })
     .from(repositoryLearnings)
@@ -1610,7 +1630,7 @@ export async function reactivateRepositoryLearning(
   }
 
   const now = new Date();
-  const [learning] = await database
+  const updateLearning = database
     .update(repositoryLearnings)
     .set({
       status: "active",
@@ -1633,34 +1653,58 @@ export async function reactivateRepositoryLearning(
       ),
     )
     .returning();
+  const enforceQuota = database
+    .update(repositoryLearnings)
+    .set({
+      status: "archived",
+      archivedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.status, "active"),
+        learningOverActiveQuotaSql(installationId, repositoryId),
+      ),
+    )
+    .returning({ id: repositoryLearnings.id });
 
-  if (!learning) return { status: "not_found" };
-
-  const overQuota = await archiveLearningIfOverQuota(
-    installationId,
-    repositoryId,
-    learning.id,
-    database,
-  );
-  if (overQuota) {
-    // Row was active only briefly; keep it archived and reject.
-    return { status: "quota_exceeded" };
+  if (!actorLogin) {
+    const [learningRows, archivedRows] = await database.batch([
+      updateLearning,
+      enforceQuota,
+    ]);
+    if (!learningRows[0]) return { status: "not_found" };
+    if (archivedRows.length > 0) return { status: "quota_exceeded" };
+    return { status: "reactivated", learning: learningRows[0] };
   }
 
-  if (actorLogin) {
-    await appendLearningAudit(
-      {
-        learningId,
-        installationId,
-        repositoryId,
-        actorLogin,
-        action: "reactivated",
-      },
-      database,
+  const appendAudit = database
+    .insert(repositoryLearningAudits)
+    .select(
+      learningAuditSource(
+        {
+          learningId,
+          installationId,
+          repositoryId,
+          actorLogin,
+          action: "reactivated",
+          status: "active",
+        },
+        now,
+        database,
+      ),
     );
-  }
-
-  return { status: "reactivated", learning };
+  const [learningRows, archivedRows] = await database.batch([
+    updateLearning,
+    enforceQuota,
+    appendAudit,
+  ]);
+  if (!learningRows[0]) return { status: "not_found" };
+  if (archivedRows.length > 0) return { status: "quota_exceeded" };
+  return { status: "reactivated", learning: learningRows[0] };
 }
 
 /**

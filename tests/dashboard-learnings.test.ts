@@ -42,7 +42,10 @@ import {
   editRepositoryLearningAction,
   reactivateRepositoryLearningAction,
 } from "@/lib/dashboard/learning-actions";
-import { filterDashboardLearnings } from "@/lib/dashboard/learnings";
+import {
+  filterDashboardLearnings,
+  groupDashboardLearnings,
+} from "@/lib/dashboard/learnings";
 import type { DashboardLearning } from "@/lib/dashboard/learnings";
 
 const sampleLearning = {
@@ -61,6 +64,8 @@ function baseDashboardLearning(
   return {
     id: sampleLearning.id,
     installationId: 42,
+    installationAccountLogin: "acme",
+    installationAccountType: "Organization",
     repositoryId: 100,
     repositoryFullName: "owner/repo",
     guidance: "Prefer explicit tenant checks.",
@@ -123,6 +128,42 @@ describe("filterDashboardLearnings", () => {
       filterDashboardLearnings(rows, { query: "tenant" }).map((row) => row.id),
     ).toEqual([sampleLearning.id]);
   });
+
+  it("groups by installation and repository", () => {
+    const rows = [
+      baseDashboardLearning(),
+      baseDashboardLearning({
+        id: "22222222-2222-4222-8222-222222222222",
+        repositoryId: 101,
+        repositoryFullName: "owner/other",
+      }),
+      baseDashboardLearning({
+        id: "33333333-3333-4333-8333-333333333333",
+        installationId: 43,
+        installationAccountLogin: "another-org",
+        repositoryId: 102,
+        repositoryFullName: "another/repo",
+      }),
+    ];
+
+    expect(groupDashboardLearnings(rows)).toEqual([
+      expect.objectContaining({
+        installationId: 42,
+        accountLogin: "acme",
+        repositories: [
+          expect.objectContaining({ repositoryFullName: "owner/other" }),
+          expect.objectContaining({ repositoryFullName: "owner/repo" }),
+        ],
+      }),
+      expect.objectContaining({
+        installationId: 43,
+        accountLogin: "another-org",
+        repositories: [
+          expect.objectContaining({ repositoryFullName: "another/repo" }),
+        ],
+      }),
+    ]);
+  });
 });
 
 describe("learning governance actions", () => {
@@ -139,6 +180,22 @@ describe("learning governance actions", () => {
       data: null,
       error: "Unauthorized",
     });
+  });
+
+  it("returns a safe envelope when authorization lookup fails", async () => {
+    access.getDashboardAccess.mockRejectedValueOnce(new Error("network"));
+
+    await expect(
+      editRepositoryLearningAction({
+        learningId: sampleLearning.id,
+        guidance: "Prefer REST.",
+      }),
+    ).resolves.toEqual({
+      success: false,
+      data: null,
+      error: "Authorization could not be verified.",
+    });
+    expect(queries.updateRepositoryLearningGuidance).not.toHaveBeenCalled();
   });
 
   it("rejects cross-tenant learning ids", async () => {
