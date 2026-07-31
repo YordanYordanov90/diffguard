@@ -1,31 +1,64 @@
 import { createHash } from "node:crypto";
 
+import { Client } from "@upstash/qstash";
 import { Receiver } from "@upstash/qstash";
 
+import {
+  CHAT_DIFF_CHAR_LIMIT,
+  DAILY_REVIEW_CAP,
+  DEBOUNCE_SECONDS,
+  LLM_TIMEOUT_MS,
+} from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
 import {
   claimInteractionRunning,
+  createQueuedReview,
+  getInstallationModel,
   getInteractionById,
+  getLatestCompletedReviewForPr,
+  isPrReviewPaused,
+  listOpenFindingsByPr,
   markInteractionCompleted,
   markInteractionFailed,
   markInteractionSkipped,
+  setPrReviewPaused,
+  countReviewsToday,
 } from "@/lib/db/queries";
 import {
   createIssueComment,
   fetchIssueComment,
+  fetchPrDiff,
   fetchPullRequestAccessibility,
   getCollaboratorPermission,
   listIssueComments,
   type RepositoryPermission,
 } from "@/lib/github/client";
+import { getReviewWorkerUrl } from "@/lib/github/review-trigger";
+import {
+  buildChatPrompt,
+  filterChatReferences,
+  formatChatReply,
+} from "@/lib/review/chat";
+import {
+  controlAcknowledgement,
+  controlRequiresWriteAccess,
+  feedbackRedirectAcknowledgement,
+  parseConversationCommand,
+  type ReviewControlAction,
+} from "@/lib/review/conversation-command";
 import {
   conversationJobSchema,
   type ConversationJob,
 } from "@/lib/review/conversation-job";
 import {
   boundThreadComments,
-  CONVERSATION_BOUNDARY_ACK,
 } from "@/lib/review/conversation-mention";
+import { processDiff } from "@/lib/review/diff";
+import {
+  generateChat,
+  ReviewFailedError,
+} from "@/lib/review/generate";
+import type { ReviewJob } from "@/lib/review/job";
 
 type QStashVerifier = {
   verify: (request: {
@@ -41,6 +74,13 @@ type ConversationQueries = {
   markInteractionCompleted: typeof markInteractionCompleted;
   markInteractionFailed: typeof markInteractionFailed;
   markInteractionSkipped: typeof markInteractionSkipped;
+  setPrReviewPaused: typeof setPrReviewPaused;
+  isPrReviewPaused: typeof isPrReviewPaused;
+  createQueuedReview: typeof createQueuedReview;
+  countReviewsToday: typeof countReviewsToday;
+  getInstallationModel: typeof getInstallationModel;
+  listOpenFindingsByPr: typeof listOpenFindingsByPr;
+  getLatestCompletedReviewForPr: typeof getLatestCompletedReviewForPr;
 };
 
 type ConversationGitHub = {
@@ -49,12 +89,24 @@ type ConversationGitHub = {
   fetchPullRequestAccessibility: typeof fetchPullRequestAccessibility;
   listIssueComments: typeof listIssueComments;
   createIssueComment: typeof createIssueComment;
+  fetchPrDiff: typeof fetchPrDiff;
+};
+
+type ReviewPublisher = {
+  publishJSON: (request: {
+    url: string;
+    body: ReviewJob;
+    delay: number;
+  }) => Promise<unknown>;
 };
 
 export type ConversationWorkerDependencies = {
   qstash: QStashVerifier;
   queries: ConversationQueries;
   github: ConversationGitHub;
+  generateChat: typeof generateChat;
+  reviewPublisher: ReviewPublisher;
+  reviewWorkerUrl: string;
 };
 
 function envelope(
@@ -72,6 +124,7 @@ function createDefaultDependencies(): ConversationWorkerDependencies {
     currentSigningKey: env.QSTASH_CURRENT_SIGNING_KEY,
     nextSigningKey: env.QSTASH_NEXT_SIGNING_KEY,
   });
+  const qstashClient = new Client({ token: env.QSTASH_TOKEN });
 
   return {
     qstash: receiver,
@@ -81,6 +134,13 @@ function createDefaultDependencies(): ConversationWorkerDependencies {
       markInteractionCompleted,
       markInteractionFailed,
       markInteractionSkipped,
+      setPrReviewPaused,
+      isPrReviewPaused,
+      createQueuedReview,
+      countReviewsToday,
+      getInstallationModel,
+      listOpenFindingsByPr,
+      getLatestCompletedReviewForPr,
     },
     github: {
       getCollaboratorPermission,
@@ -88,7 +148,13 @@ function createDefaultDependencies(): ConversationWorkerDependencies {
       fetchPullRequestAccessibility,
       listIssueComments,
       createIssueComment,
+      fetchPrDiff,
     },
+    generateChat,
+    reviewPublisher: {
+      publishJSON: (request) => qstashClient.publishJSON(request),
+    },
+    reviewWorkerUrl: getReviewWorkerUrl(),
   };
 }
 
@@ -98,6 +164,12 @@ const COLLABORATOR_PERMISSIONS = new Set<RepositoryPermission>([
   "write",
   "triage",
   "read",
+]);
+
+const WRITE_PERMISSIONS = new Set<RepositoryPermission>([
+  "admin",
+  "maintain",
+  "write",
 ]);
 
 export function actorMayStartConversation(
@@ -112,18 +184,335 @@ export function actorMayStartConversation(
   return isPrAuthor || COLLABORATOR_PERMISSIONS.has(permission);
 }
 
-export function getConversationAcknowledgementMarker(job: ConversationJob) {
+export function actorMayRunControl(
+  action: ReviewControlAction,
+  permission: RepositoryPermission,
+  actorLogin: string,
+  prAuthorLogin: string,
+): boolean {
+  if (controlRequiresWriteAccess(action)) {
+    return WRITE_PERMISSIONS.has(permission);
+  }
+  // Normal review: PR author or any collaborator.
+  return actorMayStartConversation(permission, actorLogin, prAuthorLogin);
+}
+
+export function getConversationReplyMarker(job: ConversationJob) {
   const receipt = createHash("sha256")
     .update(
       `${job.installationId}:${job.repositoryId}:${job.prNumber}:${job.sourceCommentId}`,
     )
     .digest("hex")
     .slice(0, 24);
-  return `<!-- diffguard-ack:${receipt} -->`;
+  return `<!-- diffguard-reply:${receipt} -->`;
 }
 
-function getConversationAcknowledgement(job: ConversationJob) {
-  return `${getConversationAcknowledgementMarker(job)}\n${CONVERSATION_BOUNDARY_ACK}`;
+/** @deprecated use getConversationReplyMarker */
+export function getConversationAcknowledgementMarker(job: ConversationJob) {
+  return getConversationReplyMarker(job);
+}
+
+function withReplyMarker(job: ConversationJob, body: string) {
+  return `${getConversationReplyMarker(job)}\n${body}`;
+}
+
+async function postReplyOnce(
+  job: ConversationJob,
+  body: string,
+  dependencies: ConversationWorkerDependencies,
+  threadComments: { body: string }[],
+) {
+  const marker = getConversationReplyMarker(job);
+  if (threadComments.some((comment) => comment.body.includes(marker))) {
+    return;
+  }
+  try {
+    await dependencies.github.createIssueComment(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      withReplyMarker(job, body),
+    );
+  } catch {
+    // Issues: write may be missing; interaction still completes.
+  }
+}
+
+async function enqueueManualReview(
+  job: ConversationJob,
+  pr: {
+    title: string;
+    body: string | null;
+    headSha: string;
+  },
+  forceFullReview: boolean,
+  dependencies: ConversationWorkerDependencies,
+): Promise<{ status: "queued" | "duplicate" | "daily_cap" | "failed" }> {
+  const reviewsToday = await dependencies.queries.countReviewsToday(
+    job.installationId,
+  );
+  if (reviewsToday >= DAILY_REVIEW_CAP) {
+    return { status: "daily_cap" };
+  }
+
+  const queued = await dependencies.queries.createQueuedReview({
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    prNumber: job.prNumber,
+    headSha: pr.headSha,
+  });
+  if (!queued.review) return { status: "failed" };
+
+  if (!queued.created && queued.review.status !== "queued") {
+    return { status: "duplicate" };
+  }
+
+  const reviewJob: ReviewJob = {
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    repoFullName: job.repoFullName,
+    prNumber: job.prNumber,
+    prTitle: pr.title,
+    prBody: pr.body,
+    headSha: pr.headSha,
+    deliveryId: job.deliveryId,
+    forceFullReview,
+  };
+
+  try {
+    await dependencies.reviewPublisher.publishJSON({
+      url: dependencies.reviewWorkerUrl,
+      body: reviewJob,
+      // Manual commands should start promptly; still use a short debounce.
+      delay: Math.min(DEBOUNCE_SECONDS, 15),
+    });
+  } catch {
+    return { status: "failed" };
+  }
+
+  return { status: "queued" };
+}
+
+async function handleControlCommand(
+  job: ConversationJob,
+  action: ReviewControlAction,
+  actorLogin: string,
+  pr: { title: string; body: string | null; headSha: string },
+  threadComments: { body: string }[],
+  dependencies: ConversationWorkerDependencies,
+) {
+  if (action === "pause" || action === "resume") {
+    await dependencies.queries.setPrReviewPaused(
+      job.installationId,
+      job.repositoryId,
+      job.prNumber,
+      action === "pause",
+      actorLogin,
+    );
+    await postReplyOnce(
+      job,
+      controlAcknowledgement(action),
+      dependencies,
+      threadComments,
+    );
+    return { kind: "control" as const, action };
+  }
+
+  const enqueue = await enqueueManualReview(
+    job,
+    pr,
+    action === "full_review",
+    dependencies,
+  );
+
+  if (enqueue.status === "daily_cap") {
+    await postReplyOnce(
+      job,
+      "Could not queue a review: the daily review cap for this installation has been reached.",
+      dependencies,
+      threadComments,
+    );
+    return { kind: "control" as const, action, enqueue: enqueue.status };
+  }
+  if (enqueue.status === "duplicate") {
+    await postReplyOnce(
+      job,
+      "A review for this head is already in progress or completed.",
+      dependencies,
+      threadComments,
+    );
+    return { kind: "control" as const, action, enqueue: enqueue.status };
+  }
+  if (enqueue.status === "failed") {
+    await postReplyOnce(
+      job,
+      "Could not queue a review right now. Automatic reviews are unchanged.",
+      dependencies,
+      threadComments,
+    );
+    return { kind: "control" as const, action, enqueue: enqueue.status };
+  }
+
+  await postReplyOnce(
+    job,
+    controlAcknowledgement(action),
+    dependencies,
+    threadComments,
+  );
+  return { kind: "control" as const, action, enqueue: "queued" as const };
+}
+
+async function handleChatQuestion(
+  job: ConversationJob,
+  question: string,
+  pr: {
+    title: string;
+    body: string | null;
+    headSha: string;
+    authorLogin: string;
+  },
+  threadComments: { userLogin: string; body: string }[],
+  dependencies: ConversationWorkerDependencies,
+  startedAt: number,
+) {
+  const model = await dependencies.queries.getInstallationModel(
+    job.installationId,
+  );
+  if (!model) {
+    await postReplyOnce(
+      job,
+      "Chat is unavailable: installation model is not configured.",
+      dependencies,
+      threadComments,
+    );
+    return {
+      kind: "question" as const,
+      answered: false,
+      reason: "model_missing" as const,
+    };
+  }
+
+  const [rawDiff, openFindings, latestReview] = await Promise.all([
+    dependencies.github.fetchPrDiff(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+    ),
+    dependencies.queries.listOpenFindingsByPr(
+      job.installationId,
+      job.repositoryId,
+      job.prNumber,
+    ),
+    dependencies.queries.getLatestCompletedReviewForPr(
+      job.installationId,
+      job.repositoryId,
+      job.prNumber,
+    ),
+  ]);
+
+  const processed = processDiff(rawDiff);
+  const diffForPrompt =
+    processed.diff.length > CHAT_DIFF_CHAR_LIMIT
+      ? `${processed.diff.slice(0, CHAT_DIFF_CHAR_LIMIT)}\n…[truncated for chat budget]`
+      : processed.diff;
+
+  const allowedFiles = processed.fileTree;
+  const linkedIssues = (latestReview?.linkedIssueAssessments ?? []).map(
+    (assessment) => ({
+      issueNumber: assessment.issueNumber,
+      title: assessment.title,
+      status: assessment.status,
+      rationale: assessment.rationale,
+    }),
+  );
+
+  const prompt = buildChatPrompt({
+    question,
+    prTitle: pr.title,
+    prBody: pr.body,
+    headSha: pr.headSha,
+    diff: diffForPrompt,
+    findings: openFindings.map((finding) => ({
+      id: finding.id,
+      file: finding.file,
+      line: finding.line,
+      severity: finding.severity,
+      title: finding.title,
+      detail: finding.detail.slice(0, 1_000),
+      status: finding.status,
+    })),
+    linkedIssues,
+    thread: boundThreadComments(
+      threadComments.map((comment, index) => ({
+        id: index + 1,
+        userLogin: comment.userLogin,
+        body: comment.body,
+      })),
+    ).map((comment) => ({
+      userLogin: comment.userLogin,
+      body: comment.body,
+    })),
+    allowedFiles,
+  });
+
+  try {
+    const generated = await dependencies.generateChat(
+      prompt,
+      { model },
+      { deadline: startedAt + LLM_TIMEOUT_MS },
+    );
+    const filtered = filterChatReferences(generated.output, allowedFiles);
+    await postReplyOnce(
+      job,
+      formatChatReply(filtered),
+      dependencies,
+      threadComments,
+    );
+
+    await dependencies.queries.markInteractionCompleted(
+      job.installationId,
+      job.interactionId,
+      {
+        model,
+        inputTokens: generated.usage.inputTokens,
+        outputTokens: generated.usage.outputTokens,
+        durationMs: Date.now() - startedAt,
+      },
+    );
+
+    return {
+      kind: "question" as const,
+      answered: true as const,
+      model,
+      inputTokens: generated.usage.inputTokens,
+      outputTokens: generated.usage.outputTokens,
+    };
+  } catch (error) {
+    if (error instanceof ReviewFailedError && !error.retryable) {
+      await postReplyOnce(
+        job,
+        "I could not produce a reliable answer from the bounded PR context. Try asking about a specific file or finding.",
+        dependencies,
+        threadComments,
+      );
+      await dependencies.queries.markInteractionCompleted(
+        job.installationId,
+        job.interactionId,
+        {
+          model,
+          inputTokens: null,
+          outputTokens: null,
+          durationMs: Date.now() - startedAt,
+        },
+      );
+      return {
+        kind: "question" as const,
+        answered: false as const,
+        reason: "generation_failed" as const,
+      };
+    }
+    throw error;
+  }
 }
 
 async function processConversationJob(
@@ -228,50 +617,115 @@ async function processConversationJob(
     return { status: "skipped" as const, reason: "unauthorized" };
   }
 
-  // Ephemeral thread context for Feature 34; discarded after this request.
-  const thread = await dependencies.github.listIssueComments(
+  const threadResult = await dependencies.github.listIssueComments(
     job.installationId,
     job.repoFullName,
     job.prNumber,
   );
-  const acknowledgementAlreadyPosted =
-    thread.status === "fetched" &&
-    thread.comments.some((comment) =>
-      comment.body.includes(getConversationAcknowledgementMarker(job)),
+  const threadComments =
+    threadResult.status === "fetched" ? threadResult.comments : [];
+
+  const command = parseConversationCommand(sourceComment.body);
+
+  if (command.kind === "empty") {
+    await dependencies.queries.markInteractionSkipped(
+      job.installationId,
+      job.interactionId,
+      "empty_command",
     );
-  if (thread.status === "fetched") {
-    boundThreadComments(thread.comments);
+    return { status: "skipped" as const, reason: "empty_command" };
   }
 
-  if (!acknowledgementAlreadyPosted && thread.status === "fetched") {
-    try {
-      await dependencies.github.createIssueComment(
-        job.installationId,
-        job.repoFullName,
-        job.prNumber,
-        getConversationAcknowledgement(job),
+  if (command.kind === "feedback_redirect") {
+    await postReplyOnce(
+      job,
+      feedbackRedirectAcknowledgement(command.action),
+      dependencies,
+      threadComments,
+    );
+    await dependencies.queries.markInteractionCompleted(
+      job.installationId,
+      job.interactionId,
+      { durationMs: Date.now() - startedAt },
+    );
+    return {
+      status: "completed" as const,
+      kind: "feedback_redirect" as const,
+      action: command.action,
+    };
+  }
+
+  if (command.kind === "control") {
+    if (
+      !actorMayRunControl(
+        command.action,
+        permission,
+        sourceComment.userLogin,
+        prAccess.authorLogin,
+      )
+    ) {
+      await postReplyOnce(
+        job,
+        "You need write access on this repository for that command.",
+        dependencies,
+        threadComments,
       );
-    } catch {
-      // Issues: write may be missing; boundary still completes without a reply.
+      await dependencies.queries.markInteractionSkipped(
+        job.installationId,
+        job.interactionId,
+        "unauthorized",
+      );
+      return { status: "skipped" as const, reason: "unauthorized" };
     }
+
+    const result = await handleControlCommand(
+      job,
+      command.action,
+      sourceComment.userLogin,
+      {
+        title: prAccess.title,
+        body: prAccess.body,
+        headSha: prAccess.headSha,
+      },
+      threadComments,
+      dependencies,
+    );
+
+    await dependencies.queries.markInteractionCompleted(
+      job.installationId,
+      job.interactionId,
+      { durationMs: Date.now() - startedAt },
+    );
+
+    return { status: "completed" as const, ...result };
+  }
+
+  // Free-form question — chat path (Feature 34).
+  const chatResult = await handleChatQuestion(
+    job,
+    command.question,
+    {
+      title: prAccess.title,
+      body: prAccess.body,
+      headSha: prAccess.headSha,
+      authorLogin: prAccess.authorLogin,
+    },
+    threadComments,
+    dependencies,
+    startedAt,
+  );
+
+  // markInteractionCompleted is handled inside handleChatQuestion on success.
+  if (chatResult.answered || chatResult.reason === "generation_failed") {
+    return { status: "completed" as const, ...chatResult };
   }
 
   await dependencies.queries.markInteractionCompleted(
     job.installationId,
     job.interactionId,
-    {
-      model: null,
-      inputTokens: null,
-      outputTokens: null,
-      durationMs: Date.now() - startedAt,
-    },
+    { durationMs: Date.now() - startedAt },
   );
-
-  return {
-    status: "completed" as const,
-    // Feature 34 will answer with the LLM; boundary only acknowledges.
-    answered: false,
-  };
+  return { status: "completed" as const, ...chatResult };
 }
 
 export async function handleConversationWorker(

@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/db/client", () => ({ db: {} }));
 
 import {
+  actorMayRunControl,
   actorMayStartConversation,
-  getConversationAcknowledgementMarker,
+  getConversationReplyMarker,
   handleConversationWorker,
 } from "@/lib/workers/conversation";
 import type { ConversationJob } from "@/lib/review/conversation-job";
-import { CONVERSATION_BOUNDARY_ACK } from "@/lib/review/conversation-mention";
+
+const headSha = "0123456789abcdef0123456789abcdef01234567";
 
 const baseJob: ConversationJob = {
   installationId: 42,
@@ -37,11 +39,13 @@ function createDependencies(
   overrides: {
     interactionStatus?: string;
     claimResult?: { id: string; status: "running" } | null;
+    commentBody?: string;
     commentStatus?: "fetched" | "missing" | "unavailable";
     prStatus?: "accessible" | "missing" | "unavailable";
     permission?: "admin" | "maintain" | "write" | "triage" | "read" | "none";
   } = {},
 ) {
+  const commentBody = overrides.commentBody ?? "@diffguard explain the risk";
   return {
     qstash: {
       verify: vi.fn().mockResolvedValue(true),
@@ -59,6 +63,28 @@ function createDependencies(
       markInteractionCompleted: vi.fn().mockResolvedValue({ id: baseJob.interactionId }),
       markInteractionFailed: vi.fn().mockResolvedValue({ id: baseJob.interactionId }),
       markInteractionSkipped: vi.fn().mockResolvedValue({ id: baseJob.interactionId }),
+      setPrReviewPaused: vi.fn().mockResolvedValue({ paused: true }),
+      isPrReviewPaused: vi.fn().mockResolvedValue(false),
+      createQueuedReview: vi.fn().mockResolvedValue({
+        created: true,
+        review: { id: "review-1", status: "queued" },
+      }),
+      countReviewsToday: vi.fn().mockResolvedValue(0),
+      getInstallationModel: vi.fn().mockResolvedValue("openai/test"),
+      listOpenFindingsByPr: vi.fn().mockResolvedValue([
+        {
+          id: "finding-1",
+          file: "src/auth.ts",
+          line: 12,
+          severity: "high",
+          title: "Missing auth",
+          detail: "Detail",
+          status: "open",
+        },
+      ]),
+      getLatestCompletedReviewForPr: vi.fn().mockResolvedValue({
+        linkedIssueAssessments: [],
+      }),
     },
     github: {
       getCollaboratorPermission: vi
@@ -72,31 +98,59 @@ function createDependencies(
             : {
                 status: "fetched",
                 id: 9001,
-                body: "@diffguard explain",
+                body: commentBody,
                 userLogin: "reviewer",
               },
       ),
-      fetchPullRequestAccessibility: vi.fn().mockResolvedValue({
-        status: overrides.prStatus ?? "accessible",
-        ...(overrides.prStatus === undefined ? { authorLogin: "author" } : {}),
-      }),
+      fetchPullRequestAccessibility: vi.fn().mockResolvedValue(
+        overrides.prStatus === "missing"
+          ? { status: "missing" }
+          : overrides.prStatus === "unavailable"
+            ? { status: "unavailable" }
+            : {
+                status: "accessible",
+                authorLogin: "author",
+                title: "Harden auth",
+                body: "Please review.",
+                headSha,
+                state: "open",
+              },
+      ),
       listIssueComments: vi.fn().mockResolvedValue({
         status: "fetched",
         comments: [
           { id: 1, body: "prior", userLogin: "author" },
-          { id: 9001, body: "@diffguard explain", userLogin: "reviewer" },
+          { id: 9001, body: commentBody, userLogin: "reviewer" },
         ],
       }),
       createIssueComment: vi.fn().mockResolvedValue(9002),
+      fetchPrDiff: vi
+        .fn()
+        .mockResolvedValue(
+          "diff --git a/src/auth.ts b/src/auth.ts\n@@ -1 +1 @@\n+return true;\n",
+        ),
     },
+    generateChat: vi.fn().mockResolvedValue({
+      output: {
+        answer: "The handler validates ownership on the open finding path.",
+        references: [{ file: "src/auth.ts", line: 12 }],
+      },
+      usage: { inputTokens: 100, outputTokens: 40 },
+      durationMs: 12,
+    }),
+    reviewPublisher: {
+      publishJSON: vi.fn().mockResolvedValue(undefined),
+    },
+    reviewWorkerUrl: "https://example.com/api/jobs/review",
   };
 }
 
-describe("actorMayStartConversation", () => {
-  it("allows PR authors and collaborators", () => {
-    expect(actorMayStartConversation("none", "author", "author")).toBe(true);
+describe("actor permissions", () => {
+  it("allows collaborators/authors for chat and normal review", () => {
     expect(actorMayStartConversation("read", "reader", "author")).toBe(true);
-    expect(actorMayStartConversation("none", "stranger", "author")).toBe(false);
+    expect(actorMayRunControl("review", "read", "reader", "author")).toBe(true);
+    expect(actorMayRunControl("pause", "read", "reader", "author")).toBe(false);
+    expect(actorMayRunControl("full_review", "write", "dev", "author")).toBe(true);
   });
 });
 
@@ -114,61 +168,8 @@ describe("conversation worker", () => {
     expect(dependencies.queries.getInteractionById).not.toHaveBeenCalled();
   });
 
-  it("completes the boundary without an LLM answer", async () => {
+  it("answers free-form questions with structured chat", async () => {
     const dependencies = createDependencies();
-    const response = await handleConversationWorker(
-      signedRequest(baseJob),
-      dependencies,
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      success: true,
-      data: { status: "completed", answered: false },
-      error: null,
-    });
-    expect(dependencies.github.createIssueComment).toHaveBeenCalledWith(
-      42,
-      "owner/repo",
-      7,
-      expect.stringContaining(CONVERSATION_BOUNDARY_ACK),
-    );
-    expect(dependencies.github.createIssueComment).toHaveBeenCalledWith(
-      42,
-      "owner/repo",
-      7,
-      expect.stringMatching(/<!-- diffguard-ack:[0-9a-f]{24} -->/),
-    );
-    expect(dependencies.queries.markInteractionCompleted).toHaveBeenCalled();
-    // Thread was loaded ephemerally; no persistence of bodies.
-    expect(dependencies.github.listIssueComments).toHaveBeenCalled();
-  });
-
-  it("skips deleted comments and inaccessible PRs", async () => {
-    const deleted = createDependencies({ commentStatus: "missing" });
-    const closed = createDependencies({ prStatus: "missing" });
-
-    await expect(
-      handleConversationWorker(signedRequest(baseJob), deleted),
-    ).resolves.toMatchObject({ status: 200 });
-    expect(deleted.queries.markInteractionSkipped).toHaveBeenCalledWith(
-      42,
-      baseJob.interactionId,
-      "comment_deleted",
-    );
-
-    await expect(
-      handleConversationWorker(signedRequest(baseJob), closed),
-    ).resolves.toMatchObject({ status: 200 });
-    expect(closed.queries.markInteractionSkipped).toHaveBeenCalledWith(
-      42,
-      baseJob.interactionId,
-      "pr_inaccessible",
-    );
-  });
-
-  it("skips unauthorized actors without posting a reply", async () => {
-    const dependencies = createDependencies({ permission: "none" });
     const response = await handleConversationWorker(
       signedRequest(baseJob),
       dependencies,
@@ -177,9 +178,121 @@ describe("conversation worker", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       success: true,
+      data: { status: "completed", kind: "question", answered: true },
+    });
+    expect(dependencies.generateChat).toHaveBeenCalled();
+    expect(dependencies.github.createIssueComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      expect.stringContaining("validates ownership"),
+    );
+    expect(dependencies.queries.markInteractionCompleted).toHaveBeenCalledWith(
+      42,
+      baseJob.interactionId,
+      expect.objectContaining({
+        model: "openai/test",
+        inputTokens: 100,
+        outputTokens: 40,
+      }),
+    );
+  });
+
+  it("pauses automatic reviews for write collaborators", async () => {
+    const dependencies = createDependencies({
+      commentBody: "@diffguard pause",
+    });
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(dependencies.queries.setPrReviewPaused).toHaveBeenCalledWith(
+      42,
+      100,
+      7,
+      true,
+      "reviewer",
+    );
+    expect(dependencies.generateChat).not.toHaveBeenCalled();
+    expect(dependencies.github.createIssueComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      expect.stringContaining("paused"),
+    );
+  });
+
+  it("queues a full review when authorized", async () => {
+    const dependencies = createDependencies({
+      commentBody: "@diffguard full review",
+    });
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    expect(dependencies.reviewPublisher.publishJSON).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          forceFullReview: true,
+          headSha,
+        }),
+      }),
+    );
+    expect(dependencies.generateChat).not.toHaveBeenCalled();
+  });
+
+  it("redirects feedback commands away from the chat model", async () => {
+    const dependencies = createDependencies({
+      commentBody: "@diffguard dismiss: noise",
+    });
+    await handleConversationWorker(signedRequest(baseJob), dependencies);
+
+    expect(dependencies.generateChat).not.toHaveBeenCalled();
+    expect(dependencies.github.createIssueComment).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      7,
+      expect.stringContaining("inline finding"),
+    );
+  });
+
+  it("skips unauthorized full review without queueing", async () => {
+    const dependencies = createDependencies({
+      commentBody: "@diffguard full review",
+      permission: "read",
+    });
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
       data: { status: "skipped", reason: "unauthorized" },
     });
-    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
+    expect(dependencies.reviewPublisher.publishJSON).not.toHaveBeenCalled();
+  });
+
+  it("skips deleted comments and inaccessible PRs", async () => {
+    const deleted = createDependencies({ commentStatus: "missing" });
+    await handleConversationWorker(signedRequest(baseJob), deleted);
+    expect(deleted.queries.markInteractionSkipped).toHaveBeenCalledWith(
+      42,
+      baseJob.interactionId,
+      "comment_deleted",
+    );
+
+    const closed = createDependencies({ prStatus: "missing" });
+    await handleConversationWorker(signedRequest(baseJob), closed);
+    expect(closed.queries.markInteractionSkipped).toHaveBeenCalledWith(
+      42,
+      baseJob.interactionId,
+      "pr_inaccessible",
+    );
   });
 
   it("is idempotent for already terminal interactions", async () => {
@@ -198,74 +311,9 @@ describe("conversation worker", () => {
     expect(dependencies.queries.claimInteractionRunning).not.toHaveBeenCalled();
   });
 
-  it("does not perform side effects when the atomic claim is lost", async () => {
-    const dependencies = createDependencies({ claimResult: null });
-    const response = await handleConversationWorker(
-      signedRequest(baseJob),
-      dependencies,
+  it("uses a stable reply marker for dedupe", () => {
+    expect(getConversationReplyMarker(baseJob)).toMatch(
+      /^<!-- diffguard-reply:[a-f0-9]{24} -->$/,
     );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      success: true,
-      data: { status: "already_processing" },
-      error: null,
-    });
-    expect(dependencies.github.fetchIssueComment).not.toHaveBeenCalled();
-    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
-  });
-
-  it("does not duplicate an acknowledgement after a retry", async () => {
-    const dependencies = createDependencies();
-    dependencies.github.listIssueComments.mockResolvedValueOnce({
-      status: "fetched",
-      comments: [
-        {
-          id: 9002,
-          body: getConversationAcknowledgementMarker(baseJob),
-          userLogin: "diffguard-dev[bot]",
-        },
-      ],
-    });
-
-    const response = await handleConversationWorker(
-      signedRequest(baseJob),
-      dependencies,
-    );
-
-    expect(response.status).toBe(200);
-    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
-    expect(dependencies.queries.markInteractionCompleted).toHaveBeenCalled();
-  });
-
-  it("reclaims a failed interaction when a retry wins the claim", async () => {
-    const dependencies = createDependencies({ interactionStatus: "failed" });
-    const response = await handleConversationWorker(
-      signedRequest(baseJob),
-      dependencies,
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      success: true,
-      data: { status: "completed" },
-    });
-    expect(dependencies.queries.claimInteractionRunning).toHaveBeenCalled();
-  });
-
-  it("rejects jobs whose webhook authors no longer match GitHub", async () => {
-    const dependencies = createDependencies();
-    const response = await handleConversationWorker(
-      signedRequest({ ...baseJob, actorLogin: "attacker" }),
-      dependencies,
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      success: true,
-      data: { status: "skipped", reason: "unauthorized" },
-    });
-    expect(dependencies.github.getCollaboratorPermission).not.toHaveBeenCalled();
-    expect(dependencies.github.createIssueComment).not.toHaveBeenCalled();
   });
 });

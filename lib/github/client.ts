@@ -56,6 +56,10 @@ const pullResponseSchema = z.object({
 
 const pullRequestAccessibilitySchema = z.object({
   user: z.object({ login: z.string().min(1) }),
+  title: z.string(),
+  body: z.string().nullable().optional(),
+  state: z.string().min(1),
+  head: z.object({ sha: z.string().min(1) }),
 });
 
 const repositoryTreeResponseSchema = z.object({
@@ -875,7 +879,14 @@ export function createGitHubClient(
       repoFullName: string,
       prNumber: number,
     ): Promise<
-      | { status: "accessible"; authorLogin: string }
+      | {
+          status: "accessible";
+          authorLogin: string;
+          title: string;
+          body: string | null;
+          headSha: string;
+          state: string;
+        }
       | { status: "missing" | "unavailable" }
     > {
       const { owner, repo } = parseRepositoryName(repoFullName);
@@ -888,7 +899,14 @@ export function createGitHubClient(
         });
         const parsed = pullRequestAccessibilitySchema.safeParse(response.data);
         if (!parsed.success) return { status: "unavailable" };
-        return { status: "accessible", authorLogin: parsed.data.user.login };
+        return {
+          status: "accessible",
+          authorLogin: parsed.data.user.login,
+          title: parsed.data.title,
+          body: parsed.data.body ?? null,
+          headSha: parsed.data.head.sha,
+          state: parsed.data.state,
+        };
       } catch (error) {
         if (isNotFound(error)) return { status: "missing" };
         if (isForbidden(error)) return { status: "unavailable" };

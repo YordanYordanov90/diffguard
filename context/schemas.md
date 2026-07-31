@@ -631,11 +631,11 @@ IssueCommentEvent = {
 }
 ```
 
-### pr_review_controls (Feature 34)
+### pr_review_controls (Feature 34) — implemented
 
 ```ts
-installation_id bigint NOT NULL FK
-repository_id   bigint NOT NULL FK -> repositories.id
+installation_id bigint NOT NULL FK -> installations.id (cascade)
+repository_id   bigint NOT NULL FK -> repositories.id (cascade)
 pr_number       integer NOT NULL
 paused          boolean NOT NULL DEFAULT false
 updated_by      text NOT NULL
@@ -643,6 +643,22 @@ updated_at      timestamptz NOT NULL DEFAULT now()
 
 PRIMARY KEY (repository_id, pr_number)
 INDEX (installation_id, repository_id, pr_number)
+```
+
+Automatic PR webhooks skip queueing while `paused` is true. Manual
+`@diffguard review` / `full review` still enqueue through the conversation
+worker and honor review daily-cap, idempotency, and stale-head checks.
+
+### ChatResponse (Zod — Feature 34)
+
+```ts
+ChatResponse = {
+  answer: string              // ≤4000 chars
+  references: {
+    file: string
+    line: number | null
+  }[]                         // allowlisted against supplied diff files only
+}
 ```
 
 ### Implemented inputs and planned LLM extensions (Features 29 and 34)

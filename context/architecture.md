@@ -27,11 +27,11 @@
   feedback. Verifies QStash signature, re-checks actor permission via GitHub,
   records tenant-scoped feedback, dismisses findings when authorized, and
   posts a short acknowledgement. `maxDuration = 60`.
-- `app/api/jobs/conversation/` — QStash worker for Feature 33 PR conversation
-  boundary. Verifies QStash, re-checks actor permission, confirms PR and
-  source comment accessibility, loads ephemeral thread context (discarded),
-  and records operational interaction metadata only. Feature 34 will add LLM
-  answers. `maxDuration = 60`.
+- `app/api/jobs/conversation/` — QStash worker for Features 33–34 PR
+  conversation and review controls. Verifies QStash, re-checks actor
+  permission, confirms PR and source comment accessibility, runs
+  deterministic controls or free-form chat, and records operational
+  interaction metadata only. `maxDuration = 60`.
 - `app/(dashboard)/` — Clerk-gated read-only workspace. Resolves accessible
   installations from GitHub at request time; reads tenant-scoped
   installations, repositories, and reviews.
@@ -188,10 +188,22 @@
   failure, while only the delivery that wins the worker claim may perform
   side effects. Failed infrastructure attempts remain retryable. The worker
   re-checks current comment and PR authors plus collaborator/PR-author
-  eligibility, skips deleted comments and inaccessible PRs, fetches a bounded
-  comment thread into memory only, and completes without an LLM answer.
-  `pr_interactions` stores only operational metadata keyed by source comment id
-  — never question/answer text, diffs, or prompts.
+  eligibility, skips deleted comments and inaccessible PRs, and fetches a
+  bounded comment thread into memory only. `pr_interactions` stores only
+  operational metadata keyed by source comment id — never question/answer
+  text, diffs, or prompts.
+- Feature 34 extends the conversation worker with deterministic review
+  controls (`review`, `full review`, `pause`, `resume`) parsed before any LLM
+  call, and free-form PR chat via structured `ChatResponse`. Write/maintain/
+  admin is required for pause, resume, and full review; PR author or any
+  collaborator may ask questions or request a normal review. `pr_review_controls`
+  holds per-PR pause state checked by the automatic review trigger. Chat
+  prompts delimit untrusted question, PR text, findings, thread, and diff
+  sections; file/line references are allowlisted against the reviewed paths.
+  Chat token usage is recorded on `pr_interactions` and never counts toward
+  the automatic review daily cap. Feedback commands (`valid` / `dismiss` /
+  `false-positive` / `remember`) are redirected to Features 30–31 inline
+  replies rather than mutating state through the chat model.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

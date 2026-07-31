@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import {
   ADJUDICATION_OUTPUT_TOKEN_BUDGET,
+  CHAT_OUTPUT_TOKEN_BUDGET,
   LLM_TIMEOUT_MS,
   REVIEW_OUTPUT_TOKEN_BUDGET,
 } from "@/lib/config/constants";
@@ -19,8 +20,10 @@ import type { ReviewPrompt } from "./prompt";
 import {
   adjudicationOutputSchema,
   candidateReviewOutputSchema,
+  chatResponseSchema,
   type AdjudicationOutput,
   type CandidateReviewOutput,
+  type ChatResponse,
 } from "./schema";
 
 type Usage = {
@@ -227,5 +230,29 @@ export async function adjudicateReview(
     adjudicationOutputSchema,
     options,
     ADJUDICATION_OUTPUT_TOKEN_BUDGET,
+  );
+}
+
+export type GeneratedChat = {
+  output: ChatResponse;
+  usage: Usage;
+  durationMs: number;
+};
+
+/**
+ * PR-scoped chat generation (Feature 34). Cost is tracked on pr_interactions
+ * and never counted toward the automatic review daily cap.
+ */
+export async function generateChat(
+  prompt: ReviewPrompt,
+  installation: InstallationModelConfig,
+  options: StructuredGenerationOptions = {},
+): Promise<GeneratedChat> {
+  return generateStructured(
+    prompt,
+    installation,
+    chatResponseSchema,
+    options,
+    CHAT_OUTPUT_TOKEN_BUDGET,
   );
 }

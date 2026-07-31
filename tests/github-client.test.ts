@@ -58,7 +58,15 @@ function createMockClient(
       return Promise.resolve({ data: "diff --git a/file.ts b/file.ts" });
     }
     if (route.includes("/pulls/")) {
-      return Promise.resolve({ data: { head: { sha } } });
+      return Promise.resolve({
+        data: {
+          head: { sha },
+          user: { login: "author" },
+          title: "Test PR",
+          body: null,
+          state: "open",
+        },
+      });
     }
     return Promise.resolve({ data: {} });
     },
@@ -494,12 +502,18 @@ describe("GitHub client", () => {
   });
 
   it("returns the current pull request author for conversation authorization", async () => {
-    const { client, request } = createMockClient();
-    request.mockResolvedValueOnce({ data: { user: { login: "author" } } });
+    const { client } = createMockClient();
 
     await expect(
       client.fetchPullRequestAccessibility(42, "owner/repo", 7),
-    ).resolves.toEqual({ status: "accessible", authorLogin: "author" });
+    ).resolves.toEqual({
+      status: "accessible",
+      authorLogin: "author",
+      title: "Test PR",
+      body: null,
+      headSha: sha,
+      state: "open",
+    });
   });
 
   it("verifies that an inline comment belongs to the requested PR", async () => {

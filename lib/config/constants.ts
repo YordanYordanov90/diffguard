@@ -50,4 +50,8 @@ export const DAILY_CONVERSATION_CAP = 50;
 export const CONVERSATION_THREAD_COMMENT_CAP = 20;
 /** Max characters per thread comment body kept in memory. */
 export const CONVERSATION_THREAD_BODY_CHAR_LIMIT = 2_000;
+/** Bounded chat answer output tokens (Feature 34; separate from review budget). */
+export const CHAT_OUTPUT_TOKEN_BUDGET = 2_000;
+/** Max characters of diff included in a chat prompt. */
+export const CHAT_DIFF_CHAR_LIMIT = 40_000;
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

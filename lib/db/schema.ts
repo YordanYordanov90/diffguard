@@ -7,6 +7,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -443,6 +444,39 @@ export const prInteractions = pgTable(
       table.createdAt,
     ),
     index("pr_interactions_tenant_pr_idx").on(
+      table.installationId,
+      table.repositoryId,
+      table.prNumber,
+    ),
+  ],
+);
+
+/**
+ * Per-PR automatic review controls (Feature 34).
+ * Manual review commands still pass through the normal review worker path.
+ */
+export const prReviewControls = pgTable(
+  "pr_review_controls",
+  {
+    installationId: bigint("installation_id", { mode: "number" })
+      .notNull()
+      .references(() => installations.id, { onDelete: "cascade" }),
+    repositoryId: bigint("repository_id", { mode: "number" })
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    prNumber: integer("pr_number").notNull(),
+    paused: boolean("paused").notNull().default(false),
+    updatedBy: text("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: "pr_review_controls_pk",
+      columns: [table.repositoryId, table.prNumber],
+    }),
+    index("pr_review_controls_tenant_pr_idx").on(
       table.installationId,
       table.repositoryId,
       table.prNumber,

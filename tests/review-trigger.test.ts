@@ -36,6 +36,7 @@ function createDependencies(
     markReviewSkipped: vi.fn().mockResolvedValue(null),
     requeueReview: vi.fn().mockResolvedValue({ id: "review-1" }),
     countReviewsToday: vi.fn().mockResolvedValue(0),
+    isPrReviewPaused: vi.fn().mockResolvedValue(false),
     ...overrides,
   };
 
@@ -74,6 +75,19 @@ describe("review trigger", () => {
       status: "ignored",
     });
     expect(dependencies.queries.getReviewTarget).not.toHaveBeenCalled();
+  });
+
+  it("ignores automatic triggers when the PR is paused", async () => {
+    const dependencies = createDependencies({
+      isPrReviewPaused: vi.fn().mockResolvedValue(true),
+    });
+    const handler = createReviewTriggerHandler(dependencies);
+
+    await expect(handler(baseEvent, "delivery-1")).resolves.toEqual({
+      status: "ignored",
+    });
+    expect(dependencies.queries.createQueuedReview).not.toHaveBeenCalled();
+    expect(dependencies.qstash.publishJSON).not.toHaveBeenCalled();
   });
 
   it("does not create rows for suspended or disabled repositories", async () => {

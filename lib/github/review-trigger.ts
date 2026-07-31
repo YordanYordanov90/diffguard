@@ -38,6 +38,11 @@ type ReviewQueries = {
   ) => Promise<unknown>;
   requeueReview: (installationId: number, reviewId: string) => Promise<unknown>;
   countReviewsToday: (installationId: number) => Promise<number>;
+  isPrReviewPaused: (
+    installationId: number,
+    repositoryId: number,
+    prNumber: number,
+  ) => Promise<boolean>;
 };
 
 export type ReviewTriggerDependencies = {
@@ -100,6 +105,10 @@ function createDefaultDependencies(): ReviewTriggerDependencies {
         const { countReviewsToday } = await import("@/lib/db/queries");
         return countReviewsToday(installationId);
       },
+      async isPrReviewPaused(installationId, repositoryId, prNumber) {
+        const { isPrReviewPaused } = await import("@/lib/db/queries");
+        return isPrReviewPaused(installationId, repositoryId, prNumber);
+      },
     },
     rateLimiter: new Ratelimit({
       redis,
@@ -138,6 +147,15 @@ export function createReviewTriggerHandler(
       event.repository.id,
     );
     if (!target || target.suspended || !target.enabled) return { status: "ignored" };
+
+    // Feature 34: collaborators can pause automatic reviews for this PR.
+    // Manual @diffguard review / full review still enqueue outside this path.
+    const paused = await dependencies.queries.isPrReviewPaused(
+      installationId,
+      event.repository.id,
+      event.pull_request.number,
+    );
+    if (paused) return { status: "ignored" };
 
     const job: ReviewJob = {
       installationId,

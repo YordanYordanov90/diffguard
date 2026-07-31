@@ -3,6 +3,8 @@ export * from "./feedback-job";
 export * from "./feedback-command";
 export * from "./conversation-job";
 export * from "./conversation-mention";
+export * from "./conversation-command";
+export * from "./chat";
 export * from "./learnings";
 export * from "./schema";
 export * from "./diff";
