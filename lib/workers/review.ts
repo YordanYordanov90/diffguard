@@ -39,6 +39,7 @@ import {
   fetchPrDiff,
   fetchPrHeadSha,
   fetchRepositoryFile,
+  fetchRepositoryIssue,
   fetchRepositoryTree,
   findPullRequestReviewReply,
   isCommitOnPullRequest,
@@ -50,6 +51,7 @@ import {
   type CreatedPullRequestReviewComment,
   type CreatePullRequestReviewResult,
   type PullRequestReviewCommentInput,
+  type RepositoryIssueResult,
   type RepositoryTreeResult,
 } from "@/lib/github/client";
 import {
@@ -92,12 +94,20 @@ import {
 } from "@/lib/review/inline";
 import { renderReview } from "@/lib/review/render";
 import {
+  parseLinkedIssueReferences,
+  reconcileLinkedIssueAssessments,
+  toLinkedIssuePromptContext,
+  toPersistedIssueAssessments,
+  type LinkedIssueFetchOutcome,
+} from "@/lib/review/linked-issues";
+import {
   candidateReviewOutputSchema,
   reviewOutputSchema,
   adjudicationOutputSchema,
   type ConfirmedFinding,
   type FindingCandidate,
   type FindingUpdate,
+  type IssueAssessment,
   type ReviewOutput,
 } from "@/lib/review/schema";
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
@@ -154,6 +164,7 @@ type GitHubClient = {
   fetchCommitRangeDiff: typeof fetchCommitRangeDiff;
   isCommitOnPullRequest: typeof isCommitOnPullRequest;
   fetchInstructionsFile: typeof fetchInstructionsFile;
+  fetchRepositoryIssue: typeof fetchRepositoryIssue;
   fetchRepositoryFile: typeof fetchRepositoryFile;
   fetchRepositoryTree: typeof fetchRepositoryTree;
   upsertComment: typeof upsertComment;
@@ -266,6 +277,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       fetchCommitRangeDiff,
       isCommitOnPullRequest,
       fetchInstructionsFile,
+      fetchRepositoryIssue,
       fetchRepositoryFile,
       fetchRepositoryTree,
       upsertComment,
@@ -409,11 +421,14 @@ function severityCounts(review: ReviewOutput) {
 function parseCandidateOutput(output: unknown): {
   candidates: FindingCandidate[];
   findingUpdates: FindingUpdate[];
+  linkedIssues: IssueAssessment[];
 } {
   const candidateOutput = candidateReviewOutputSchema.safeParse(output);
   if (candidateOutput.success) return candidateOutput.data;
   const legacyOutput = reviewOutputSchema.safeParse(output);
-  if (!legacyOutput.success) return { candidates: [], findingUpdates: [] };
+  if (!legacyOutput.success) {
+    return { candidates: [], findingUpdates: [], linkedIssues: [] };
+  }
   return {
     candidates: legacyOutput.data.findings.map((finding) => ({
       ...finding,
@@ -425,7 +440,55 @@ function parseCandidateOutput(output: unknown): {
       suggestedChange: null,
     })),
     findingUpdates: [],
+    linkedIssues: [],
   };
+}
+
+function inaccessibleIssueReason(status: Exclude<RepositoryIssueResult["status"], "fetched">): string {
+  switch (status) {
+    case "forbidden":
+      return "Issue content was inaccessible (missing Issues: read permission or private issue access).";
+    case "missing":
+      return "Issue was not found in this repository.";
+    case "not_an_issue":
+      return "Reference points to a pull request, not an issue.";
+    case "invalid":
+      return "Issue response was invalid or incomplete.";
+    case "unavailable":
+      return "Issue could not be retrieved for this review.";
+  }
+}
+
+async function loadLinkedIssueOutcomes(
+  job: ReviewJob,
+  references: ReturnType<typeof parseLinkedIssueReferences>,
+  dependencies: ReviewWorkerDependencies,
+): Promise<LinkedIssueFetchOutcome[]> {
+  if (references.length === 0) return [];
+
+  const outcomes: LinkedIssueFetchOutcome[] = [];
+  for (const reference of references) {
+    const result = await dependencies.github.fetchRepositoryIssue(
+      job.installationId,
+      job.repoFullName,
+      reference.issueNumber,
+    );
+    if (result.status === "fetched") {
+      outcomes.push({
+        status: "fetched",
+        issueNumber: result.issueNumber,
+        title: result.title,
+        body: result.body,
+      });
+    } else {
+      outcomes.push({
+        status: "inaccessible",
+        issueNumber: reference.issueNumber,
+        reason: result.status,
+      });
+    }
+  }
+  return outcomes;
 }
 
 function toOpenFinding(finding: StoredOpenFinding): OpenFinding {
@@ -660,7 +723,8 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
   const reviewStartedAt = Date.now();
   const llmDeadline = reviewStartedAt + LLM_TIMEOUT_MS;
   try {
-    const [{ plan, rawDiff }, model, instructions] = await Promise.all([
+    const linkedIssueReferences = parseLinkedIssueReferences(job.prBody, job.repoFullName);
+    const [{ plan, rawDiff }, model, instructions, linkedIssueOutcomes] = await Promise.all([
       selectReviewDiff(job, dependencies),
       dependencies.queries.getInstallationModel(job.installationId),
       dependencies.github.fetchInstructionsFile(
@@ -668,6 +732,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         job.repoFullName,
         job.headSha,
       ),
+      loadLinkedIssueOutcomes(job, linkedIssueReferences, dependencies),
     ]);
     if (!model) throw new Error("Installation model configuration is missing.");
 
@@ -684,6 +749,24 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       openFindings.map(toOpenFinding),
       processedDiff.files,
     );
+    const linkedIssuePromptContext = toLinkedIssuePromptContext(linkedIssueOutcomes);
+    const inaccessibleLinkedIssues = new Map<number, string>();
+    for (const outcome of linkedIssueOutcomes) {
+      if (outcome.status === "inaccessible") {
+        inaccessibleLinkedIssues.set(
+          outcome.issueNumber,
+          inaccessibleIssueReason(outcome.reason),
+        );
+      }
+    }
+    const linkedIssueTitles = new Map<number, string>();
+    for (const outcome of linkedIssueOutcomes) {
+      if (outcome.status === "fetched") {
+        linkedIssueTitles.set(outcome.issueNumber, outcome.title);
+      } else {
+        linkedIssueTitles.set(outcome.issueNumber, `Issue #${outcome.issueNumber}`);
+      }
+    }
     const promptContext = {
       prTitle: job.prTitle,
       prBody: job.prBody,
@@ -691,6 +774,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       diff: processedDiff.diff,
       instructions,
       skippedFiles: processedDiff.skippedFiles,
+      linkedIssues: linkedIssuePromptContext,
       reconciliationFindings: eligibleOpenFindings.map((finding) => ({
         id: finding.id,
         file: finding.file,
@@ -754,6 +838,16 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     const generated = await dependencies.generateReview(prompt, { model }, { deadline: llmDeadline });
     const generatedOutput = parseCandidateOutput(generated.output);
     const generatedCandidates = generatedOutput.candidates;
+    const linkedIssueAssessments = reconcileLinkedIssueAssessments(
+      linkedIssueReferences,
+      // Only assess issues that were supplied to the model; inaccessible ones stay unclear.
+      linkedIssuePromptContext.length > 0 ? generatedOutput.linkedIssues : [],
+      inaccessibleLinkedIssues,
+    );
+    const persistedLinkedIssues = toPersistedIssueAssessments(
+      linkedIssueAssessments,
+      linkedIssueTitles,
+    );
     const prepared = prepareCandidates(generatedCandidates, processedDiff.files);
     let gatedReview = emptyGatedReview();
     let confirmedFindings: ConfirmedFinding[] = [];
@@ -948,6 +1042,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       comparedFromSha: plan.comparedFromSha,
       summaryOnlyFindingCount,
       inlineCommentCount: attachedInlineCount,
+      linkedIssues: persistedLinkedIssues,
       reconciliation: reconciliationMetadata,
     });
 
@@ -992,6 +1087,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       manualCheckCandidates,
       adjudicationModel,
       adjudicationDurationMs,
+      linkedIssueAssessments: persistedLinkedIssues,
       skippedFiles: processedDiff.skippedFiles,
       model,
       inputTokens: totalUsage.inputTokens,

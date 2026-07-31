@@ -1,5 +1,18 @@
 import type { ReviewMode } from "./baseline";
-import type { Finding, ReviewOutput, Severity } from "./schema";
+import type {
+  Finding,
+  IssueAssessment,
+  PersistedIssueAssessment,
+  ReviewOutput,
+  Severity,
+} from "./schema";
+
+export type RenderLinkedIssue = Pick<
+  IssueAssessment | PersistedIssueAssessment,
+  "issueNumber" | "status" | "rationale" | "unmetRequirements"
+> & {
+  title?: string;
+};
 
 export type RenderMetadata = {
   filesReviewed: number;
@@ -10,6 +23,7 @@ export type RenderMetadata = {
   /** When set and > 0, disclose that some findings have no inline comment. */
   summaryOnlyFindingCount?: number;
   inlineCommentCount?: number;
+  linkedIssues?: RenderLinkedIssue[];
   reconciliation?: {
     newFindings: Finding[];
     recurringFindings: Finding[];
@@ -93,6 +107,29 @@ function renderSkippedFiles(skippedFiles: string[]): string {
   ].join("\n");
 }
 
+const linkedIssueStatusLabel: Record<RenderLinkedIssue["status"], string> = {
+  addressed: "Addressed",
+  not_addressed: "Not addressed",
+  unclear: "Unclear",
+};
+
+function renderLinkedIssues(issues: RenderLinkedIssue[] | undefined): string {
+  if (!issues || issues.length === 0) return "";
+  const lines = issues.map((issue) => {
+    const label = linkedIssueStatusLabel[issue.status];
+    const title = issue.title?.trim() ? ` · ${issue.title.trim()}` : "";
+    const head = `- **#${issue.issueNumber}${title}** — ${label}: ${issue.rationale}`;
+    if (issue.status !== "not_addressed" || issue.unmetRequirements.length === 0) {
+      return head;
+    }
+    const unmet = issue.unmetRequirements
+      .map((requirement) => `  - ${requirement}`)
+      .join("\n");
+    return `${head}\n${unmet}`;
+  });
+  return ["## Linked requirements", "", ...lines].join("\n");
+}
+
 export function renderReview(review: ReviewOutput, metadata: RenderMetadata): string {
   if (metadata.reconciliation) {
     return renderReconciledReview(review, metadata, metadata.reconciliation);
@@ -122,6 +159,9 @@ export function renderReview(review: ReviewOutput, metadata: RenderMetadata): st
       "</details>",
     );
   }
+
+  const linkedIssues = renderLinkedIssues(metadata.linkedIssues);
+  if (linkedIssues) sections.push("", linkedIssues);
 
   const inlineCount = metadata.inlineCommentCount ?? 0;
   const summaryOnly = metadata.summaryOnlyFindingCount ?? 0;
@@ -167,6 +207,8 @@ function renderReconciledReview(
   if (reconciliation.resolvedFindings.length > 0) {
     sections.push("", "## Resolved in this update", "", renderFindings(reconciliation.resolvedFindings));
   }
+  const linkedIssues = renderLinkedIssues(metadata.linkedIssues);
+  if (linkedIssues) sections.push("", linkedIssues);
   const skippedFiles = renderSkippedFiles(metadata.skippedFiles);
   if (skippedFiles) sections.push("", skippedFiles);
   sections.push("", "---", renderFooter(metadata));

@@ -22,6 +22,15 @@ export type StoredSuggestedChange = {
   replacement: string;
 };
 
+/** Persisted linked-issue assessment (Feature 29); never includes issue body. */
+export type StoredIssueAssessment = {
+  issueNumber: number;
+  title: string;
+  status: "addressed" | "not_addressed" | "unclear";
+  rationale: string;
+  unmetRequirements: string[];
+};
+
 export const reviewStatusEnum = pgEnum("review_status", [
   "queued",
   "running",
@@ -137,6 +146,10 @@ export const reviews = pgTable(
     manualCheckCandidates: integer("manual_check_candidates").notNull().default(0),
     adjudicationModel: text("adjudication_model"),
     adjudicationDurationMs: integer("adjudication_duration_ms"),
+    linkedIssueAssessments: jsonb("linked_issue_assessments")
+      .$type<StoredIssueAssessment[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     skippedFiles: text("skipped_files")
       .array()
       .notNull()

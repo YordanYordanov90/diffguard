@@ -221,6 +221,91 @@ describe("GitHub client", () => {
     );
   });
 
+  it("fetches same-repo issues and soft-fails permission/missing/PR cases", async () => {
+    const { client, request } = createMockClient();
+    const { RequestError } = await import("octokit");
+
+    request.mockResolvedValueOnce({
+      data: {
+        number: 12,
+        title: "Add rate limiting",
+        body: "Require per-IP limits.",
+        state: "open",
+      },
+    });
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 12)).resolves.toEqual({
+      status: "fetched",
+      issueNumber: 12,
+      title: "Add rate limiting",
+      body: "Require per-IP limits.",
+      state: "open",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/issues/{issue_number}",
+      { owner: "owner", repo: "repo", issue_number: 12 },
+    );
+
+    request.mockResolvedValueOnce({
+      data: {
+        number: 13,
+        title: "A pull request",
+        body: null,
+        state: "open",
+        pull_request: { url: "https://api.github.com/repos/owner/repo/pulls/13" },
+      },
+    });
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 13)).resolves.toEqual({
+      status: "not_an_issue",
+    });
+
+    request.mockResolvedValueOnce({
+      data: {
+        number: 14,
+        title: "Duplicate issue",
+        body: "Tracked elsewhere.",
+        state: "closed",
+        state_reason: "duplicate",
+      },
+    });
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 14)).resolves.toEqual({
+      status: "unavailable",
+    });
+
+    request.mockRejectedValueOnce(
+      new RequestError("Forbidden", 403, {
+        response: {
+          status: 403,
+          headers: {},
+          url: "https://api.github.com",
+          data: {},
+        },
+        request: { method: "GET", url: "https://api.github.com", headers: {} },
+      }),
+    );
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 15)).resolves.toEqual({
+      status: "forbidden",
+    });
+
+    request.mockRejectedValueOnce(
+      new RequestError("Not Found", 404, {
+        response: {
+          status: 404,
+          headers: {},
+          url: "https://api.github.com",
+          data: {},
+        },
+        request: { method: "GET", url: "https://api.github.com", headers: {} },
+      }),
+    );
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 16)).resolves.toEqual({
+      status: "missing",
+    });
+
+    await expect(client.fetchRepositoryIssue(42, "owner/repo", 0)).resolves.toEqual({
+      status: "invalid",
+    });
+  });
+
   it("ignores unsupported oversized instruction responses", async () => {
     const { client } = createMockClient({
       type: "file",

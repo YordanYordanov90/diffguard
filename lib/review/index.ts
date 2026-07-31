@@ -10,3 +10,4 @@ export * from "./generate";
 export * from "./evidence";
 export * from "./fingerprint";
 export * from "./inline";
+export * from "./linked-issues";

@@ -73,6 +73,7 @@ function createDependencies(
       ),
       isCommitOnPullRequest: vi.fn().mockResolvedValue(true),
       fetchInstructionsFile: vi.fn().mockResolvedValue(null),
+      fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "missing" }),
       fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
       fetchRepositoryTree: vi.fn().mockResolvedValue({ status: "fetched", paths: [] }),
       upsertComment: vi.fn().mockResolvedValue(9001),
@@ -245,6 +246,7 @@ describe("review worker route", () => {
         comparedFromSha: null,
         verdict: "approve",
         findingsCritical: 0,
+        linkedIssueAssessments: [],
         skippedFiles: [],
       }),
     );
@@ -267,6 +269,142 @@ describe("review worker route", () => {
     );
     expect(dependencies.queries.saveReviewCommentId).toHaveBeenCalledBefore(
       dependencies.queries.markReviewCompleted,
+    );
+  });
+
+  it("assesses explicit linked issues and continues when Issues permission is missing", async () => {
+    const linkedJob = {
+      ...job,
+      prBody: "Fixes #12\n\nAlso see #99 casually.",
+    };
+    const dependencies = createDependencies({}, {
+      fetchRepositoryIssue: vi.fn().mockResolvedValue({
+        status: "fetched",
+        issueNumber: 12,
+        title: "Add rate limiting",
+        body: "Require per-IP limits on auth.",
+        state: "open",
+      }),
+    });
+    dependencies.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Looks solid.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [],
+        linkedIssues: [
+          {
+            issueNumber: 12,
+            status: "addressed",
+            rationale: "Rate limiting is implemented on the auth route.",
+            unmetRequirements: [],
+          },
+          {
+            issueNumber: 999,
+            status: "addressed",
+            rationale: "Fabricated issue must be dropped.",
+            unmetRequirements: [],
+          },
+        ],
+      },
+      usage: { inputTokens: 10, outputTokens: 3 },
+      durationMs: 12,
+    });
+
+    const response = await handleReviewWorker(request(linkedJob), dependencies);
+    expect(response.status).toBe(200);
+    expect(dependencies.github.fetchRepositoryIssue).toHaveBeenCalledWith(42, "owner/repo", 12);
+    expect(dependencies.generateReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.stringContaining("<untrusted-linked-issues>"),
+      }),
+      { model: "openai/test" },
+      expect.objectContaining({ deadline: expect.any(Number) }),
+    );
+    expect(dependencies.generateReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.stringContaining("Add rate limiting"),
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(dependencies.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        linkedIssueAssessments: [
+          {
+            issueNumber: 12,
+            title: "Add rate limiting",
+            status: "addressed",
+            rationale: "Rate limiting is implemented on the auth route.",
+            unmetRequirements: [],
+          },
+        ],
+        reviewMarkdown: expect.stringContaining("## Linked requirements"),
+      }),
+    );
+
+    const forbiddenDeps = createDependencies({}, {
+      fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "forbidden" }),
+    });
+    forbiddenDeps.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Code review still works.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [],
+        linkedIssues: [],
+      },
+      usage: { inputTokens: 4, outputTokens: 1 },
+      durationMs: 5,
+    });
+    const forbiddenResponse = await handleReviewWorker(request(linkedJob), forbiddenDeps);
+    expect(forbiddenResponse.status).toBe(200);
+    expect(forbiddenDeps.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        linkedIssueAssessments: [
+          expect.objectContaining({
+            issueNumber: 12,
+            status: "unclear",
+            title: "Issue #12",
+          }),
+        ],
+        verdict: "approve",
+      }),
+    );
+
+    const duplicateDeps = createDependencies({}, {
+      fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "unavailable" }),
+    });
+    duplicateDeps.generateReview = vi.fn().mockResolvedValue({
+      output: {
+        summary: "Code review still works.",
+        verdict: "approve",
+        candidates: [],
+        findingUpdates: [],
+        linkedIssues: [],
+      },
+      usage: { inputTokens: 4, outputTokens: 1 },
+      durationMs: 5,
+    });
+    const duplicateResponse = await handleReviewWorker(request(linkedJob), duplicateDeps);
+    expect(duplicateResponse.status).toBe(200);
+    expect(duplicateDeps.queries.markReviewCompleted).toHaveBeenCalledWith(
+      42,
+      "review-1",
+      expect.objectContaining({
+        linkedIssueAssessments: [
+          expect.objectContaining({
+            issueNumber: 12,
+            status: "unclear",
+            rationale: "Issue could not be retrieved for this review.",
+          }),
+        ],
+        verdict: "approve",
+      }),
     );
   });
 

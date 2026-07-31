@@ -126,6 +126,37 @@ export type CreatePullRequestReviewResult = {
   reviewId: number;
 };
 
+/**
+ * Result of fetching a same-repo issue for linked-requirement validation.
+ * Permission or access failures are soft so ordinary code review continues.
+ */
+export type RepositoryIssueResult =
+  | {
+      status: "fetched";
+      issueNumber: number;
+      title: string;
+      body: string | null;
+      state: string;
+    }
+  | {
+      status:
+        | "missing"
+        | "forbidden"
+        | "not_an_issue"
+        | "invalid"
+        | "unavailable";
+    };
+
+const repositoryIssueSchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  body: z.string().nullable().optional(),
+  state: z.string().min(1),
+  state_reason: z.enum(["completed", "not_planned", "duplicate", "reopened"]).nullable().optional(),
+  /** Present when the "issue" is actually a pull request. */
+  pull_request: z.unknown().optional(),
+});
+
 function createDefaultDependencies(): GitHubClientDependencies {
   let app: AppClient | undefined;
 
@@ -182,6 +213,10 @@ function isPullRequestReviewCommentInScope(
 
 function isNotFound(error: unknown) {
   return error instanceof RequestError && error.status === 404;
+}
+
+function isForbidden(error: unknown) {
+  return error instanceof RequestError && error.status === 403;
 }
 
 function isUnsupportedInstructionResponse(error: unknown) {
@@ -402,6 +437,54 @@ export function createGitHubClient(
         "utf8",
       );
       return decoded.slice(0, INSTRUCTIONS_TOKEN_CAP * 4);
+    },
+
+    /**
+     * Fetch a same-repository issue by number for linked-requirement review.
+     * Soft-fails on missing permission (403), missing issues, PRs-as-issues,
+     * and malformed payloads so code review still proceeds.
+     */
+    async fetchRepositoryIssue(
+      installationId: number,
+      repoFullName: string,
+      issueNumber: number,
+    ): Promise<RepositoryIssueResult> {
+      if (!Number.isInteger(issueNumber) || issueNumber < 1) {
+        return { status: "invalid" };
+      }
+      const { owner, repo } = parseRepositoryName(repoFullName);
+      const octokit = await getInstallationClient(dependencies, installationId);
+      try {
+        const response = await octokit.request(
+          "GET /repos/{owner}/{repo}/issues/{issue_number}",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+          },
+        );
+        const parsed = repositoryIssueSchema.safeParse(response.data);
+        if (!parsed.success) return { status: "invalid" };
+        if (parsed.data.pull_request !== undefined) {
+          return { status: "not_an_issue" };
+        }
+        if (parsed.data.number !== issueNumber) return { status: "invalid" };
+        if (parsed.data.state === "closed" && parsed.data.state_reason === "duplicate") {
+          return { status: "unavailable" };
+        }
+        return {
+          status: "fetched",
+          issueNumber: parsed.data.number,
+          title: parsed.data.title,
+          body: parsed.data.body ?? null,
+          state: parsed.data.state,
+        };
+      } catch (error) {
+        if (isForbidden(error)) return { status: "forbidden" };
+        if (isNotFound(error)) return { status: "missing" };
+        // Soft-fail other errors so ordinary code review still completes.
+        return { status: "unavailable" };
+      }
     },
 
     async fetchRepositoryFile(
@@ -729,6 +812,9 @@ export const githubClient = {
   fetchInstructionsFile: (
     ...args: Parameters<GitHubClient["fetchInstructionsFile"]>
   ) => getDefaultClient().fetchInstructionsFile(...args),
+  fetchRepositoryIssue: (
+    ...args: Parameters<GitHubClient["fetchRepositoryIssue"]>
+  ) => getDefaultClient().fetchRepositoryIssue(...args),
   fetchRepositoryFile: (
     ...args: Parameters<GitHubClient["fetchRepositoryFile"]>
   ) => getDefaultClient().fetchRepositoryFile(...args),
@@ -764,6 +850,7 @@ export const {
   fetchCommitRangeDiff,
   isCommitOnPullRequest,
   fetchInstructionsFile,
+  fetchRepositoryIssue,
   fetchRepositoryFile,
   fetchRepositoryTree,
   upsertComment,

@@ -139,7 +139,21 @@ describe("review boundary schemas", () => {
         requiresRuntimeVerification: false,
         suggestedChange: null,
       }],
+      linkedIssues: [{
+        issueNumber: 12,
+        status: "not_addressed",
+        rationale: "Missing validation.",
+        unmetRequirements: ["Validate email"],
+      }],
     })).not.toThrow();
+
+    expect(
+      candidateReviewOutputSchema.parse({
+        summary: "Candidate",
+        verdict: "comment",
+        candidates: [],
+      }).linkedIssues,
+    ).toEqual([]);
 
     expect(() => candidateReviewOutputSchema.parse({
       summary: "Candidate",

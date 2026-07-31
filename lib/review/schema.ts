@@ -29,6 +29,12 @@ export const findingLifecycleSchema = z.enum(["open", "resolved", "dismissed"]);
 
 export const findingUpdateStatusSchema = z.enum(["open", "resolved"]);
 
+export const issueAssessmentStatusSchema = z.enum([
+  "addressed",
+  "not_addressed",
+  "unclear",
+]);
+
 export const findingSchema = z.object({
   severity: severitySchema,
   category: categorySchema,
@@ -37,6 +43,18 @@ export const findingSchema = z.object({
   title: z.string().min(1).max(300),
   detail: z.string().min(1).max(8_000),
   suggestion: z.string().max(8_000).nullable(),
+});
+
+export const issueAssessmentSchema = z.object({
+  issueNumber: z.number().int().positive(),
+  status: issueAssessmentStatusSchema,
+  rationale: z.string().min(1).max(1_000),
+  unmetRequirements: z.array(z.string().min(1).max(500)).max(10),
+});
+
+/** Persistable assessment plus minimal issue metadata (never full body). */
+export const persistedIssueAssessmentSchema = issueAssessmentSchema.extend({
+  title: z.string().min(1).max(500),
 });
 
 export const reviewOutputSchema = z.object({
@@ -69,6 +87,7 @@ export const candidateReviewOutputSchema = z.object({
     status: findingUpdateStatusSchema,
     reason: z.string().min(1).max(1_000),
   })).max(50).default([]),
+  linkedIssues: z.array(issueAssessmentSchema).max(3).default([]),
 });
 
 export const findingAdjudicationSchema = z.object({
@@ -100,6 +119,9 @@ export type FindingDecision = z.infer<typeof findingDecisionSchema>;
 export type FindingLifecycle = z.infer<typeof findingLifecycleSchema>;
 export type FindingUpdateStatus = z.infer<typeof findingUpdateStatusSchema>;
 export type FindingUpdate = z.infer<typeof candidateReviewOutputSchema>["findingUpdates"][number];
+export type IssueAssessmentStatus = z.infer<typeof issueAssessmentStatusSchema>;
+export type IssueAssessment = z.infer<typeof issueAssessmentSchema>;
+export type PersistedIssueAssessment = z.infer<typeof persistedIssueAssessmentSchema>;
 export type SuggestedChange = z.infer<typeof suggestedChangeSchema>;
 export type FindingCandidate = z.infer<typeof findingCandidateSchema>;
 export type ConfirmedFinding = z.infer<typeof confirmedFindingSchema>;

@@ -284,6 +284,17 @@ Update this file after every meaningful implementation change.
   replies release only their own lease for retry. Range-fetch failures broaden
   to a full review, and the worker rechecks the head before durable finding
   writes.
+- Feature 29 (Linked GitHub Issue Validation) — implementation completed
+  2026-07-30: pure closing-reference parser (max three same-repo issues),
+  installation-token issue fetch with soft permission/access failure, bounded
+  delimited untrusted issue context in the review prompt, allowlisted
+  `linkedIssues` assessments on `CandidateReviewOutput`, compact
+  **Linked requirements** summary section, and `reviews.linked_issue_assessments`
+  jsonb persistence (title + assessment only, never full body). Migration
+  `0006_linked_issue_assessments.sql`. Parser, access, prompt-injection,
+  render, schema, GitHub client, and worker tests pass. Remaining: enable
+  `Issues: read` on the GitHub App and verify installation re-approval before
+  beta; end-to-end issue with measurable acceptance criteria on a scratch PR.
 
 ## In Progress
 
@@ -302,8 +313,8 @@ Update this file after every meaningful implementation change.
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
 2. Continue the review-quality roadmap in dependency order:
-   - Feature 28: finding reconciliation on top of incremental baselines;
-   - Feature 29: linked GitHub Issue validation;
+   - Feature 29: enable `Issues: read` on the GitHub App and e2e-verify on a
+     scratch PR with measurable acceptance criteria;
    - Features 30–32: feedback signals and governed repository learnings;
    - Features 33–34: PR-scoped AI conversation as the final feature.
 

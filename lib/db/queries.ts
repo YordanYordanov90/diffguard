@@ -9,6 +9,7 @@ import {
   type ReviewMode,
   type FindingLifecycle,
   type SkipReason,
+  type StoredIssueAssessment,
   type StoredSuggestedChange,
 } from "./schema";
 
@@ -61,6 +62,7 @@ export type ReviewCompletion = {
   manualCheckCandidates: number;
   adjudicationModel: string | null;
   adjudicationDurationMs: number | null;
+  linkedIssueAssessments: StoredIssueAssessment[];
   skippedFiles: string[];
   model: string;
   inputTokens: number | null;
