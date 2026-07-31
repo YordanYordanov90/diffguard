@@ -1,13 +1,18 @@
 import {
   FEEDBACK_COMMAND_MENTION,
   FEEDBACK_REASON_MAX_CHARS,
+  LEARNING_GUIDANCE_MAX_CHARS,
 } from "@/lib/config/constants";
 
-export type FeedbackCommandAction = "valid" | "dismiss" | "false_positive";
+export type FeedbackCommandAction =
+  | "valid"
+  | "dismiss"
+  | "false_positive"
+  | "remember";
 
 export type FeedbackCommand =
   | { action: "valid"; reason: null }
-  | { action: "dismiss" | "false_positive"; reason: string };
+  | { action: "dismiss" | "false_positive" | "remember"; reason: string };
 
 /**
  * Parse a deterministic DiffGuard feedback command from a review comment body.
@@ -24,7 +29,7 @@ export function parseFeedbackCommand(body: string): FeedbackCommand | null {
   }
 
   const reasonCommand = new RegExp(
-    `^${mention}\\s+(dismiss|false-positive)\\s*:\\s*([\\s\\S]+)$`,
+    `^${mention}\\s+(dismiss|false-positive|remember)\\s*:\\s*([\\s\\S]+)$`,
     "i",
   );
   const match = reasonCommand.exec(trimmed);
@@ -32,13 +37,19 @@ export function parseFeedbackCommand(body: string): FeedbackCommand | null {
 
   const rawAction = match[1]?.toLowerCase();
   const reason = match[2]?.trim() ?? "";
-  if (!reason || reason.length > FEEDBACK_REASON_MAX_CHARS) return null;
+  if (!reason) return null;
 
   if (rawAction === "dismiss") {
+    if (reason.length > FEEDBACK_REASON_MAX_CHARS) return null;
     return { action: "dismiss", reason };
   }
   if (rawAction === "false-positive") {
+    if (reason.length > FEEDBACK_REASON_MAX_CHARS) return null;
     return { action: "false_positive", reason };
+  }
+  if (rawAction === "remember") {
+    if (reason.length > LEARNING_GUIDANCE_MAX_CHARS) return null;
+    return { action: "remember", reason };
   }
   return null;
 }
@@ -52,6 +63,8 @@ export function feedbackAcknowledgement(action: FeedbackCommandAction): string {
       return "Finding dismissed.";
     case "false_positive":
       return "Recorded as false positive and dismissed.";
+    case "remember":
+      return "Saved repository preference.";
   }
 }
 
@@ -59,4 +72,15 @@ export function feedbackActionDismisses(
   action: FeedbackCommandAction,
 ): boolean {
   return action === "dismiss" || action === "false_positive";
+}
+
+/** remember / dismiss / false-positive require write-capable roles. */
+export function feedbackActionRequiresWriteAccess(
+  action: FeedbackCommandAction,
+): boolean {
+  return (
+    action === "dismiss" ||
+    action === "false_positive" ||
+    action === "remember"
+  );
 }

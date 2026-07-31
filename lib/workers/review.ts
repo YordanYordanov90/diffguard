@@ -110,6 +110,7 @@ import {
   type IssueAssessment,
   type ReviewOutput,
 } from "@/lib/review/schema";
+import { selectLearningsForPrompt } from "@/lib/review/learnings";
 import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
@@ -155,6 +156,15 @@ type ReviewQueries = {
   releaseFindingResolutionReply: (
     ...args: Parameters<typeof releaseFindingResolutionReply>
   ) => Promise<unknown>;
+  listActiveRepositoryLearnings: (
+    installationId: number,
+    repositoryId: number,
+  ) => Promise<{ id: string; guidance: string }[]>;
+  recordRepositoryLearningUsage: (
+    installationId: number,
+    repositoryId: number,
+    learningIds: string[],
+  ) => Promise<number>;
 };
 
 type GitHubClient = {
@@ -268,6 +278,14 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
       async releaseFindingResolutionReply(...args) {
         const { releaseFindingResolutionReply } = await import("@/lib/db/queries");
         return releaseFindingResolutionReply(...args);
+      },
+      async listActiveRepositoryLearnings(...args) {
+        const { listActiveRepositoryLearnings } = await import("@/lib/db/queries");
+        return listActiveRepositoryLearnings(...args);
+      },
+      async recordRepositoryLearningUsage(...args) {
+        const { recordRepositoryLearningUsage } = await import("@/lib/db/queries");
+        return recordRepositoryLearningUsage(...args);
       },
     },
     github: {
@@ -767,6 +785,11 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         linkedIssueTitles.set(outcome.issueNumber, `Issue #${outcome.issueNumber}`);
       }
     }
+    const activeLearnings = await dependencies.queries.listActiveRepositoryLearnings(
+      job.installationId,
+      job.repositoryId,
+    );
+    const repositoryLearnings = selectLearningsForPrompt(activeLearnings);
     const promptContext = {
       prTitle: job.prTitle,
       prBody: job.prBody,
@@ -775,6 +798,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       instructions,
       skippedFiles: processedDiff.skippedFiles,
       linkedIssues: linkedIssuePromptContext,
+      repositoryLearnings,
       reconciliationFindings: eligibleOpenFindings.map((finding) => ({
         id: finding.id,
         file: finding.file,
@@ -836,6 +860,14 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     );
     const prompt = buildReviewPrompt({ ...promptContext, ...fittedContext });
     const generated = await dependencies.generateReview(prompt, { model }, { deadline: llmDeadline });
+    // Aggregate-only usage: ids supplied to the model, never guidance text.
+    if (repositoryLearnings.length > 0) {
+      await dependencies.queries.recordRepositoryLearningUsage(
+        job.installationId,
+        job.repositoryId,
+        repositoryLearnings.map((learning) => learning.id),
+      );
+    }
     const generatedOutput = parseCandidateOutput(generated.output);
     const generatedCandidates = generatedOutput.candidates;
     const linkedIssueAssessments = reconcileLinkedIssueAssessments(

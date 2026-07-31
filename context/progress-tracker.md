@@ -8,8 +8,8 @@ Update this file after every meaningful implementation change.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Features 22 and 24
   are implemented with acceptance verification still pending, Feature 23 is
-  underway, Features 25–26 and 28–30 (findings, reconciliation, linked issues,
-  feedback signals) are implemented, and Features 31–34 remain.
+  underway, Features 25–26 and 28–31 (findings through repository learnings)
+  are implemented, and Features 32–34 remain.
 
 ## Current Goal
 
@@ -307,6 +307,16 @@ Update this file after every meaningful implementation change.
   boundary-schema, and worker authorization tests pass. Remaining: ensure the
   GitHub App subscribes to `pull_request_review_comment`, then dogfood one
   valid + one false-positive signal on a scratch PR.
+- Feature 31 (Repository Learnings Engine) — implementation completed
+  2026-07-31: `repository_learnings` table + `learning_status` enum, pure
+  content-hash and prompt budget helpers, `@diffguard remember:` command,
+  write/maintain/admin-gated creation on the feedback worker, active load with
+  revalidation, delimited untrusted prompt section subordinate to security
+  rules, aggregate usage counters by learning id only. Migration
+  `0008_repository_learnings.sql` (applied to Neon). Parser, learning,
+  prompt-injection, and worker permission tests pass. Remaining: dogfood
+  `@diffguard remember:` on a scratch PR and confirm the next review supplies
+  learning ids without logging guidance text.
 
 ## In Progress
 
@@ -327,9 +337,10 @@ Update this file after every meaningful implementation change.
 2. Continue the review-quality roadmap in dependency order:
    - Feature 29: enable `Issues: read` on the GitHub App and e2e-verify on a
      scratch PR with measurable acceptance criteria;
-   - Feature 30: apply `0007_finding_feedback` on Neon and dogfood valid +
-     false-positive signals on a scratch PR;
-   - Features 31–32: governed repository learnings;
+   - Feature 30: dogfood valid + false-positive signals on a scratch PR;
+   - Feature 31: apply `0008_repository_learnings` on Neon and dogfood
+     `@diffguard remember:` → next review;
+   - Feature 32: governed repository learnings UI/archive;
    - Features 33–34: PR-scoped AI conversation as the final feature.
 
 ## Open Questions

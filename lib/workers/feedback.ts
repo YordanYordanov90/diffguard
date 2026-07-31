@@ -1,7 +1,12 @@
 import { Receiver } from "@upstash/qstash";
 
+import {
+  FEEDBACK_REASON_MAX_CHARS,
+  LEARNING_GUIDANCE_MAX_CHARS,
+} from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
 import {
+  createRepositoryLearning,
   getFindingByGitHubCommentId,
   recordFindingFeedback,
 } from "@/lib/db/queries";
@@ -13,11 +18,12 @@ import {
 import {
   feedbackAcknowledgement,
   feedbackActionDismisses,
+  feedbackActionRequiresWriteAccess,
 } from "@/lib/review/feedback-command";
 import {
   feedbackJobSchema,
-  type FeedbackAction,
   type FeedbackJob,
+  type FeedbackJobAction,
 } from "@/lib/review/feedback-job";
 
 type QStashVerifier = {
@@ -31,6 +37,7 @@ type QStashVerifier = {
 type FeedbackQueries = {
   getFindingByGitHubCommentId: typeof getFindingByGitHubCommentId;
   recordFindingFeedback: typeof recordFindingFeedback;
+  createRepositoryLearning: typeof createRepositoryLearning;
 };
 
 type FeedbackGitHub = {
@@ -65,6 +72,7 @@ function createDefaultDependencies(): FeedbackWorkerDependencies {
     queries: {
       getFindingByGitHubCommentId,
       recordFindingFeedback,
+      createRepositoryLearning,
     },
     github: {
       getCollaboratorPermission,
@@ -73,8 +81,8 @@ function createDefaultDependencies(): FeedbackWorkerDependencies {
   };
 }
 
-/** Write-capable roles required for dismiss and false-positive. */
-const DISMISS_PERMISSIONS = new Set<RepositoryPermission>([
+/** Write-capable roles required for dismiss, false-positive, and remember. */
+const WRITE_PERMISSIONS = new Set<RepositoryPermission>([
   "admin",
   "maintain",
   "write",
@@ -90,7 +98,7 @@ const VALID_COLLABORATOR_PERMISSIONS = new Set<RepositoryPermission>([
 ]);
 
 export function actorMayRecordFeedback(
-  action: FeedbackAction,
+  action: FeedbackJobAction,
   permission: RepositoryPermission,
   actorLogin: string,
   prAuthorLogin: string,
@@ -104,7 +112,81 @@ export function actorMayRecordFeedback(
     return isPrAuthor || VALID_COLLABORATOR_PERMISSIONS.has(permission);
   }
 
-  return DISMISS_PERMISSIONS.has(permission);
+  if (feedbackActionRequiresWriteAccess(action)) {
+    return WRITE_PERMISSIONS.has(permission);
+  }
+
+  return false;
+}
+
+function isJobReasonValid(job: FeedbackJob): boolean {
+  if (job.action === "valid") return job.reason === null;
+  if (job.reason === null || job.reason.length === 0) return false;
+  if (job.action === "remember") {
+    return job.reason.length <= LEARNING_GUIDANCE_MAX_CHARS;
+  }
+  return job.reason.length <= FEEDBACK_REASON_MAX_CHARS;
+}
+
+async function acknowledge(
+  job: FeedbackJob,
+  dependencies: FeedbackWorkerDependencies,
+  action: FeedbackJobAction,
+) {
+  try {
+    // GitHub only accepts replies under the top-level review comment, not
+    // replies-to-replies. sourceCommentId is the user's command reply.
+    await dependencies.github.replyToPullRequestReviewComment(
+      job.installationId,
+      job.repoFullName,
+      job.prNumber,
+      job.parentCommentId,
+      feedbackAcknowledgement(action),
+    );
+  } catch {
+    // State is already durable; acknowledgement is best-effort.
+  }
+}
+
+async function processRememberJob(
+  job: FeedbackJob,
+  findingId: string,
+  dependencies: FeedbackWorkerDependencies,
+) {
+  if (!job.reason) {
+    return { status: "ignored" as const, reason: "invalid_guidance" };
+  }
+
+  const result = await dependencies.queries.createRepositoryLearning({
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    guidance: job.reason,
+    createdBy: job.actorLogin,
+    sourceFindingId: findingId,
+    sourceCommentId: job.sourceCommentId,
+  });
+
+  if (result.status === "invalid_guidance") {
+    return { status: "ignored" as const, reason: "invalid_guidance" };
+  }
+  if (result.status === "repository_not_found") {
+    return { status: "ignored" as const, reason: "repository_not_found" };
+  }
+  if (result.status === "quota_exceeded") {
+    return { status: "ignored" as const, reason: "quota_exceeded" };
+  }
+  if (result.status === "duplicate") {
+    // Prefer acknowledging so the collaborator knows the preference is already stored.
+    await acknowledge(job, dependencies, "remember");
+    return { status: "duplicate" as const, kind: "learning" as const };
+  }
+
+  await acknowledge(job, dependencies, "remember");
+  return {
+    status: "recorded" as const,
+    action: "remember" as const,
+    learningId: result.learning.id,
+  };
 }
 
 async function processFeedbackJob(
@@ -139,6 +221,10 @@ async function processFeedbackJob(
     return { status: "ignored" as const, reason: "unauthorized" };
   }
 
+  if (job.action === "remember") {
+    return processRememberJob(job, finding.id, dependencies);
+  }
+
   const dismissFinding = feedbackActionDismisses(job.action);
   const result = await dependencies.queries.recordFindingFeedback({
     installationId: job.installationId,
@@ -156,19 +242,7 @@ async function processFeedbackJob(
     return { status: "duplicate" as const };
   }
 
-  try {
-    // GitHub only accepts replies under the top-level review comment, not
-    // replies-to-replies. sourceCommentId is the user's command reply.
-    await dependencies.github.replyToPullRequestReviewComment(
-      job.installationId,
-      job.repoFullName,
-      job.prNumber,
-      job.parentCommentId,
-      feedbackAcknowledgement(job.action),
-    );
-  } catch {
-    // State is already durable; acknowledgement is best-effort.
-  }
+  await acknowledge(job, dependencies, job.action);
 
   return {
     status: "recorded" as const,
@@ -203,14 +277,7 @@ export async function handleFeedbackWorker(
     return envelope(false, null, "Invalid feedback job.", 400);
   }
 
-  // Reason required for dismiss / false_positive; null only for valid.
-  if (job.action === "valid" && job.reason !== null) {
-    return envelope(false, null, "Invalid feedback job.", 400);
-  }
-  if (
-    (job.action === "dismiss" || job.action === "false_positive") &&
-    (job.reason === null || job.reason.length === 0)
-  ) {
+  if (!isJobReasonValid(job)) {
     return envelope(false, null, "Invalid feedback job.", 400);
   }
 

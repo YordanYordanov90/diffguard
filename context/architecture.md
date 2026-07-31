@@ -154,6 +154,17 @@
   internal ids, permission details, or raw API errors. Bot-authored events and
   free-form text are ignored. False-positive rows are offline golden-set
   candidates only — never automatic repository instructions.
+- Feature 31 extends the same feedback path with
+  `@diffguard remember: <preference>`. Write/maintain/admin permission is
+  required. A tenant-scoped `repository_learnings` row stores bounded guidance,
+  a trusted content hash for duplicates, optional source finding/comment ids,
+  and active/archived status — never source code or thread history. Active
+  learnings load by installation and repository id, are revalidated on every
+  load, budgeted into a dedicated delimited untrusted prompt section after
+  system rules, and cannot weaken security checks or override the output
+  schema. Aggregate usage counters record which learning ids were supplied to
+  a review; guidance text is never logged. Archive is soft; Feature 32 owns
+  user-facing governance.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
