@@ -1717,6 +1717,7 @@ export async function reactivateRepositoryLearning(
     .where(eq(repositoryLearnings.id, learningIdFromMutation))
     .limit(1);
   if (!learning) return { status: "not_found" };
+  if (learning.status !== "active") return { status: "quota_exceeded" };
   return { status: "reactivated", learning };
 }
 
