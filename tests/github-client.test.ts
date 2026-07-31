@@ -464,6 +464,35 @@ describe("GitHub client", () => {
     );
   });
 
+  it("reads collaborator permission and maps missing users to none", async () => {
+    const { RequestError } = await import("octokit");
+    const { client, request } = createMockClient();
+    request.mockResolvedValueOnce({ data: { permission: "maintain" } });
+
+    await expect(
+      client.getCollaboratorPermission(42, "owner/repo", "maintainer"),
+    ).resolves.toBe("maintain");
+    expect(request).toHaveBeenCalledWith(
+      "GET /repos/{owner}/{repo}/collaborators/{username}/permission",
+      { owner: "owner", repo: "repo", username: "maintainer" },
+    );
+
+    request.mockRejectedValueOnce(
+      new RequestError("Not Found", 404, {
+        request: { method: "GET", url: "https://api.github.com", headers: {} },
+        response: {
+          url: "https://api.github.com",
+          status: 404,
+          headers: {},
+          data: {},
+        },
+      }),
+    );
+    await expect(
+      client.getCollaboratorPermission(42, "owner/repo", "removed"),
+    ).resolves.toBe("none");
+  });
+
   it("verifies that an inline comment belongs to the requested PR", async () => {
     const { client, request } = createMockClient();
 

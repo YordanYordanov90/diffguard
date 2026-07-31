@@ -19,6 +19,7 @@ FindingConfidence = "low" | "medium" | "high"
 FindingDecision   = "confirmed" | "rejected" | "manual_verification"
 FindingLifecycle  = "open" | "resolved" | "dismissed"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
+FeedbackAction    = "valid" | "dismiss" | "false_positive"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -139,6 +140,29 @@ to file-level findings before persistence. `suggested_change` is revalidated
 at the write boundary and again against the reviewed patch before any GitHub
 suggestion block is rendered (Feature 26). Upserts never overwrite an existing
 `github_comment_id` and never silently reopen `dismissed` findings.
+
+### finding_feedback (Feature 30)
+
+```ts
+id                uuid PK DEFAULT gen_random_uuid()
+installation_id   bigint NOT NULL FK -> installations.id (cascade)
+repository_id     bigint NOT NULL FK -> repositories.id (cascade)
+pr_number         integer NOT NULL
+finding_id        uuid NOT NULL FK -> review_findings.id (cascade)
+source_comment_id bigint NOT NULL
+actor_login       text NOT NULL
+action            FeedbackAction NOT NULL
+reason            text NULL
+created_at        timestamptz NOT NULL DEFAULT now()
+
+UNIQUE (source_comment_id)
+INDEX  (installation_id, repository_id, pr_number)
+```
+
+`reason` is required and bounded (≤500 chars) for `dismiss` and
+`false_positive`; it is null for `valid`. Arbitrary thread history is never
+stored. False-positive rows are candidates for offline golden evaluation only;
+they never auto-promote into repository instructions.
 
 ### Inline review comments (Feature 26 — runtime, not a table)
 
@@ -351,6 +375,22 @@ InstallationRepositoriesEvent = {
   repositories_added:   { id: number, full_name: string }[]
   repositories_removed: { id: number, full_name: string }[]
 }
+
+PullRequestReviewCommentEvent = {
+  action: string   // only "created" is processed; edits/deletes ignored
+  installation: { id: number }
+  repository:   { id: number, full_name: string }
+  pull_request: {
+    number: number
+    user: { login: string, type: string }
+  }
+  comment: {
+    id: number
+    body: string
+    user: { login: string, type: string }
+    in_reply_to_id: number | null   // required for processing (reply only)
+  }
+}
 ```
 
 ## QStash Job Payload (Zod — `lib/review/job.ts`)
@@ -368,8 +408,33 @@ ReviewJob = {
   prBody:         string | null
   headSha:        string   // worker exits early if no longer PR head
   deliveryId:     string   // GitHub X-GitHub-Delivery, for tracing
+  forceFullReview?: boolean  // internal override for Feature 34; default false
 }
 ```
+
+## Feedback Job Payload (Zod — `lib/review/feedback-job.ts`, Feature 30)
+
+Enqueued immediately by the webhook after a recognized command parse; verified
+and validated by `/api/jobs/feedback`.
+
+```ts
+FeedbackJob = {
+  installationId:   number
+  repositoryId:     number
+  repoFullName:     string
+  prNumber:         number
+  parentCommentId:  number  // must map to review_findings.github_comment_id
+  sourceCommentId:  number  // idempotency key for finding_feedback
+  actorLogin:       string
+  prAuthorLogin:    string
+  action:           FeedbackAction
+  reason:           string | null  // null for valid; required otherwise
+  deliveryId:       string
+}
+```
+
+Deterministic commands (no LLM): `@diffguard valid`,
+`@diffguard dismiss: <reason>`, `@diffguard false-positive: <reason>`.
 
 ## Prompt Context Assembly (shape, not schema)
 
@@ -435,44 +500,16 @@ matching Zod/Drizzle code in the same increment.
 ### Planned enums
 
 ```ts
-FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
 InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```
 
-### Implemented: IssueAssessmentStatus (Feature 29)
+### Implemented: FeedbackAction (Feature 30) and IssueAssessmentStatus (Feature 29)
 
 ```ts
+FeedbackAction        = "valid" | "dismiss" | "false_positive"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 ```
-
-### Review job (QStash — Feature 27 addition)
-
-```ts
-// existing fields plus:
-forceFullReview?: boolean  // internal override for Feature 34; default false
-```
-
-### finding_feedback (Feature 30)
-
-```ts
-id                uuid PK DEFAULT gen_random_uuid()
-installation_id   bigint NOT NULL FK
-repository_id     bigint NOT NULL FK -> repositories.id
-pr_number         integer NOT NULL
-finding_id        uuid NOT NULL FK -> review_findings.id
-source_comment_id bigint NOT NULL
-actor_login       text NOT NULL
-action            FeedbackAction NOT NULL
-reason            text NULL
-created_at        timestamptz NOT NULL DEFAULT now()
-
-UNIQUE (source_comment_id)
-INDEX  (installation_id, repository_id, pr_number)
-```
-
-`reason` is required and bounded for `dismiss` and `false_positive`; it is
-null for `valid`.
 
 ### repository_learnings (Feature 31)
 

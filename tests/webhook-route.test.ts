@@ -76,6 +76,7 @@ describe("GitHub webhook route", () => {
       secret,
       {
         handlePullRequest,
+        handlePullRequestReviewComment: vi.fn(),
         handleInstallation: vi.fn(),
         handleInstallationRepos: vi.fn(),
       },
@@ -109,6 +110,58 @@ describe("GitHub webhook route", () => {
       success: true,
       data: { dispatched: false, ignored: true },
       error: null,
+    });
+  });
+
+  it("validates and dispatches pull_request_review_comment events", async () => {
+    const handlePullRequestReviewComment = vi.fn();
+    const payload = {
+      action: "created",
+      installation: { id: 42 },
+      repository: { id: 100, full_name: "owner/repo" },
+      pull_request: {
+        number: 7,
+        user: { login: "author", type: "User" },
+      },
+      comment: {
+        id: 9001,
+        body: "@diffguard valid",
+        user: { login: "reviewer", type: "User" },
+        in_reply_to_id: 7001,
+      },
+    };
+
+    const response = await handleGitHubWebhook(
+      signedRequest(JSON.stringify(payload), "pull_request_review_comment"),
+      secret,
+      {
+        handlePullRequest: vi.fn(),
+        handlePullRequestReviewComment,
+        handleInstallation: vi.fn(),
+        handleInstallationRepos: vi.fn(),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(handlePullRequestReviewComment).toHaveBeenCalledWith(
+      payload,
+      "delivery-1",
+    );
+  });
+
+  it("returns 400 for a signed but malformed review comment payload", async () => {
+    const response = await handleGitHubWebhook(
+      signedRequest(
+        JSON.stringify({ action: "created", comment: { id: 1 } }),
+        "pull_request_review_comment",
+      ),
+      secret,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: "Invalid webhook payload.",
     });
   });
 });

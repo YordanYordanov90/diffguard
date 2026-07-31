@@ -2,10 +2,12 @@ import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 
 
 import { db as defaultDb } from "./client";
 import {
+  findingFeedback,
   installations,
   repositories,
   reviewFindings,
   reviews,
+  type FeedbackAction,
   type ReviewMode,
   type FindingLifecycle,
   type SkipReason,
@@ -977,6 +979,106 @@ export async function markFindingTerminalStatus(
     .returning();
 
   return finding ?? null;
+}
+
+/**
+ * Look up a DiffGuard finding by its stored inline GitHub comment id.
+ * Always tenant- and PR-scoped so cross-repo/PR parents cannot match.
+ */
+export async function getFindingByGitHubCommentId(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  githubCommentId: number,
+  database: Database = defaultDb,
+) {
+  const [finding] = await database
+    .select()
+    .from(reviewFindings)
+    .where(
+      and(
+        eq(reviewFindings.installationId, installationId),
+        eq(reviewFindings.repositoryId, repositoryId),
+        eq(reviewFindings.prNumber, prNumber),
+        eq(reviewFindings.githubCommentId, githubCommentId),
+      ),
+    )
+    .limit(1);
+
+  return finding ?? null;
+}
+
+export type FindingFeedbackInput = {
+  installationId: number;
+  repositoryId: number;
+  prNumber: number;
+  findingId: string;
+  sourceCommentId: number;
+  actorLogin: string;
+  action: FeedbackAction;
+  reason: string | null;
+  /** When true, also moves an open finding to dismissed (idempotent). */
+  dismissFinding: boolean;
+};
+
+/**
+ * Record collaborator feedback once per source comment id.
+ * Optionally dismisses the open finding in the same batch.
+ * Returns whether a new feedback row was inserted.
+ */
+export async function recordFindingFeedback(
+  input: FindingFeedbackInput,
+  database: Database = defaultDb,
+): Promise<{ recorded: boolean; dismissed: boolean }> {
+  const insertFeedback = database
+    .insert(findingFeedback)
+    .values({
+      installationId: input.installationId,
+      repositoryId: input.repositoryId,
+      prNumber: input.prNumber,
+      findingId: input.findingId,
+      sourceCommentId: input.sourceCommentId,
+      actorLogin: input.actorLogin,
+      action: input.action,
+      reason: input.reason,
+    })
+    .onConflictDoNothing({
+      target: findingFeedback.sourceCommentId,
+    })
+    .returning({ id: findingFeedback.id });
+
+  if (!input.dismissFinding) {
+    const inserted = await insertFeedback;
+    return { recorded: inserted.length > 0, dismissed: false };
+  }
+
+  const dismissFinding = database
+    .update(reviewFindings)
+    .set({
+      status: "dismissed",
+      dismissedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(reviewFindings.id, input.findingId),
+        eq(reviewFindings.installationId, input.installationId),
+        eq(reviewFindings.repositoryId, input.repositoryId),
+        eq(reviewFindings.prNumber, input.prNumber),
+        eq(reviewFindings.status, "open"),
+      ),
+    )
+    .returning({ id: reviewFindings.id });
+
+  const [insertedRows, dismissedRows] = await database.batch([
+    insertFeedback,
+    dismissFinding,
+  ]);
+
+  return {
+    recorded: (insertedRows as { id: string }[]).length > 0,
+    dismissed: (dismissedRows as { id: string }[]).length > 0,
+  };
 }
 
 export async function upsertConfirmedFindings(

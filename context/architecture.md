@@ -23,6 +23,10 @@
 - `app/api/jobs/review/` — QStash worker callback. Verifies QStash
   signature, enforces idempotency and daily cap, runs the review pipeline,
   writes results, posts/edits the PR comment. `maxDuration = 300`.
+- `app/api/jobs/feedback/` — QStash worker for Feature 30 collaborator
+  feedback. Verifies QStash signature, re-checks actor permission via GitHub,
+  records tenant-scoped feedback, dismisses findings when authorized, and
+  posts a short acknowledgement. `maxDuration = 60`.
 - `app/(dashboard)/` — Clerk-gated read-only workspace. Resolves accessible
   installations from GitHub at request time; reads tenant-scoped
   installations, repositories, and reviews.
@@ -137,6 +141,19 @@
   allowlist-validated, rendered under **Linked requirements**, and persisted
   with minimal metadata (number, title, status, rationale, unmet list) — never
   the full issue body.
+- Feature 30 subscribes to `pull_request_review_comment` events. After raw-body
+  HMAC verification, only newly created human replies whose body parses as a
+  deterministic `@diffguard` command are enqueued to a signed QStash feedback
+  job. The worker resolves the parent comment only when it matches a tenant/
+  repository/PR-scoped DiffGuard finding `github_comment_id`, re-checks the
+  actor's current repository permission via GitHub (`valid`: PR author or any
+  collaborator; `dismiss` / `false_positive`: write, maintain, or admin),
+  inserts one `finding_feedback` row keyed by source comment id, and moves open
+  findings to `dismissed` for dismiss and false-positive signals. `valid` never
+  changes lifecycle. Acknowledgements are short replies that never expose
+  internal ids, permission details, or raw API errors. Bot-authored events and
+  free-form text are ignored. False-positive rows are offline golden-set
+  candidates only — never automatic repository instructions.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

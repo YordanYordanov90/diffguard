@@ -47,8 +47,38 @@ export const installationRepositoriesEventSchema = z.object({
   repositories_removed: z.array(repositorySchema),
 });
 
+/**
+ * Minimal fields for Feature 30 feedback signals.
+ * Only newly created replies are processed; edits/deletes are ignored.
+ */
+export const pullRequestReviewCommentEventSchema = z.object({
+  action: z.string(),
+  installation: installationIdSchema,
+  repository: repositorySchema,
+  pull_request: z.object({
+    number: z.number().int().positive(),
+    user: z.object({
+      login: z.string().min(1),
+      type: z.string().min(1),
+    }),
+  }),
+  comment: z.object({
+    id: z.number().int().positive(),
+    body: z.string(),
+    user: z.object({
+      login: z.string().min(1),
+      type: z.string().min(1),
+    }),
+    /** Present only for replies; top-level inline comments are ignored. */
+    in_reply_to_id: z.number().int().positive().nullable().optional(),
+  }),
+});
+
 export type PullRequestEvent = z.infer<typeof pullRequestEventSchema>;
 export type InstallationEvent = z.infer<typeof installationEventSchema>;
 export type InstallationRepositoriesEvent = z.infer<
   typeof installationRepositoriesEventSchema
+>;
+export type PullRequestReviewCommentEvent = z.infer<
+  typeof pullRequestReviewCommentEventSchema
 >;

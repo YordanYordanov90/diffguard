@@ -24,4 +24,8 @@ export const MAX_LINKED_ISSUES = 3;
 /** Bounded issue title/body supplied to the model (chars, not tokens). */
 export const LINKED_ISSUE_TITLE_CHAR_LIMIT = 500;
 export const LINKED_ISSUE_BODY_CHAR_LIMIT = 4_000;
+/** Bounded reason text for dismiss / false-positive feedback commands. */
+export const FEEDBACK_REASON_MAX_CHARS = 500;
+/** Deterministic mention used by collaborator feedback commands (Feature 30). */
+export const FEEDBACK_COMMAND_MENTION = "@diffguard";
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

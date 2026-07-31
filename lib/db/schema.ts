@@ -91,6 +91,14 @@ export type FindingConfidence = (typeof findingConfidenceEnum.enumValues)[number
 export type Severity = (typeof severityEnum.enumValues)[number];
 export type Category = (typeof categoryEnum.enumValues)[number];
 
+export const feedbackActionEnum = pgEnum("feedback_action", [
+  "valid",
+  "dismiss",
+  "false_positive",
+]);
+
+export type FeedbackAction = (typeof feedbackActionEnum.enumValues)[number];
+
 export const installations = pgTable("installations", {
   id: bigint("id", { mode: "number" }).primaryKey(),
   accountLogin: text("account_login").notNull(),
@@ -250,6 +258,39 @@ export const reviewFindings = pgTable(
       table.repositoryId,
       table.prNumber,
       table.status,
+    ),
+  ],
+);
+
+/** Collaborator feedback on a DiffGuard finding (Feature 30). No thread history. */
+export const findingFeedback = pgTable(
+  "finding_feedback",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    installationId: bigint("installation_id", { mode: "number" })
+      .notNull()
+      .references(() => installations.id, { onDelete: "cascade" }),
+    repositoryId: bigint("repository_id", { mode: "number" })
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    prNumber: integer("pr_number").notNull(),
+    findingId: uuid("finding_id")
+      .notNull()
+      .references(() => reviewFindings.id, { onDelete: "cascade" }),
+    sourceCommentId: bigint("source_comment_id", { mode: "number" }).notNull(),
+    actorLogin: text("actor_login").notNull(),
+    action: feedbackActionEnum("action").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("finding_feedback_source_comment_id_unique").on(table.sourceCommentId),
+    index("finding_feedback_tenant_pr_idx").on(
+      table.installationId,
+      table.repositoryId,
+      table.prNumber,
     ),
   ],
 );
