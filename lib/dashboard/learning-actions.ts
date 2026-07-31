@@ -235,8 +235,11 @@ export async function reactivateRepositoryLearningAction(input: {
         error: "This repository has reached the active learning limit.",
       };
     }
-    if (result.status === "not_found") {
-      // Idempotent if already active.
+    if (
+      result.status === "not_found" ||
+      result.status === "already_active"
+    ) {
+      // Idempotent if already active or the row was concurrently reactivated.
       revalidateLearnings();
       return { success: true, data: null, error: null };
     }

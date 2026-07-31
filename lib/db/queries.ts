@@ -1486,42 +1486,43 @@ export async function updateRepositoryLearningGuidance(
     .limit(1);
   if (hashOwner) return { status: "duplicate" };
 
-  const updateLearning = database
-    .update(repositoryLearnings)
-    .set({
-      guidance: trimmed,
-      contentHash,
-      lastModifiedBy: actorLogin,
-      lastModifiedAt: now,
-      lastAction: "edited",
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(repositoryLearnings.id, learningId),
-        eq(repositoryLearnings.installationId, installationId),
-        eq(repositoryLearnings.repositoryId, repositoryId),
-      ),
+  const mutationRows = await database.execute<{ id: string }>(sql`
+    WITH updated AS (
+      UPDATE ${repositoryLearnings}
+      SET
+        ${sql.identifier("guidance")} = ${trimmed},
+        ${sql.identifier("content_hash")} = ${contentHash},
+        ${sql.identifier("last_modified_by")} = ${actorLogin},
+        ${sql.identifier("last_modified_at")} = ${now},
+        ${sql.identifier("last_action")} = ${"edited"}::learning_audit_action,
+        ${sql.identifier("updated_at")} = ${now}
+      WHERE ${repositoryLearnings.id} = ${learningId}
+        AND ${repositoryLearnings.installationId} = ${installationId}
+        AND ${repositoryLearnings.repositoryId} = ${repositoryId}
+      RETURNING ${repositoryLearnings.id},
+        ${repositoryLearnings.installationId},
+        ${repositoryLearnings.repositoryId}
+    ), audit AS (
+      INSERT INTO ${repositoryLearningAudits} (
+        ${sql.identifier("learning_id")},
+        ${sql.identifier("installation_id")},
+        ${sql.identifier("repository_id")},
+        ${sql.identifier("actor_login")},
+        ${sql.identifier("action")}
+      )
+      SELECT id, installation_id, repository_id, ${actorLogin}, ${"edited"}::learning_audit_action
+      FROM updated
     )
-    .returning();
+    SELECT id FROM updated
+  `);
+  const learningIdFromMutation = mutationRows.rows[0]?.id;
+  if (!learningIdFromMutation) return { status: "not_found" };
 
-  const appendAudit = database
-    .insert(repositoryLearningAudits)
-    .select(
-      learningAuditSource(
-        {
-          learningId,
-          installationId,
-          repositoryId,
-          actorLogin,
-          action: "edited",
-        },
-        now,
-        database,
-      ),
-    );
-  const [learningRows] = await database.batch([updateLearning, appendAudit]);
-  const learning = learningRows[0];
+  const [learning] = await database
+    .select()
+    .from(repositoryLearnings)
+    .where(eq(repositoryLearnings.id, learningIdFromMutation))
+    .limit(1);
   if (!learning) return { status: "not_found" };
 
   return { status: "updated", learning };
@@ -1586,7 +1587,8 @@ export async function archiveRepositoryLearning(
 
 /**
  * Reactivate an archived learning when under the active quota.
- * Post-reactivation eviction closes concurrent overshoot races.
+ * already_active is returned for idempotent retries; post-reactivation
+ * eviction closes concurrent overshoot races.
  */
 export async function reactivateRepositoryLearning(
   installationId: number,
@@ -1596,6 +1598,7 @@ export async function reactivateRepositoryLearning(
   database: Database = defaultDb,
 ): Promise<
   | { status: "reactivated"; learning: typeof repositoryLearnings.$inferSelect }
+  | { status: "already_active" }
   | { status: "not_found" }
   | { status: "quota_exceeded" }
 > {
@@ -1611,9 +1614,11 @@ export async function reactivateRepositoryLearning(
       ),
     )
     .limit(1);
-  if (!target || target.status !== "archived") {
+  if (!target) {
     return { status: "not_found" };
   }
+  if (target.status === "active") return { status: "already_active" };
+  if (target.status !== "archived") return { status: "not_found" };
 
   const activeCountRows = await database
     .select({ id: repositoryLearnings.id })

@@ -305,4 +305,14 @@ describe("learning governance actions", () => {
       error: "This repository has reached the active learning limit.",
     });
   });
+
+  it("treats an already-active reactivation as idempotent success", async () => {
+    queries.reactivateRepositoryLearning.mockResolvedValueOnce({
+      status: "already_active",
+    });
+
+    await expect(
+      reactivateRepositoryLearningAction({ learningId: sampleLearning.id }),
+    ).resolves.toEqual({ success: true, data: null, error: null });
+  });
 });
