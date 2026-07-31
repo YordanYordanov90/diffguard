@@ -26,6 +26,7 @@ export async function refreshDashboardCoverage(): Promise<ActionResult> {
     revalidatePath("/dashboard");
     revalidatePath("/dashboard/repositories");
     revalidatePath("/dashboard/reviews");
+    revalidatePath("/dashboard/learnings");
     return { success: true, data: null, error: null };
   } catch {
     return {

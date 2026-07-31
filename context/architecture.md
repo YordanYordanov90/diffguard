@@ -165,6 +165,14 @@
   schema. Aggregate usage counters record which learning ids were supplied to
   a review; guidance text is never logged. Archive is soft; Feature 32 owns
   user-facing governance.
+- Feature 32 adds `/dashboard/learnings` for authorized dashboard users.
+  Reads filter by the GitHub-derived installation allowlist only. Server
+  Actions edit guidance, archive, and reactivate after re-checking the actor's
+  current repository write/maintain/admin permission via GitHub. Mutations
+  never trust client-supplied installation or repository ids, return
+  `{ success, data, error }`, and append a minimal audit row (actor, action,
+  timestamp) without logging guidance text. Editing cannot change creator,
+  usage counters, or source linkage. Learning text is rendered as plain text.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 

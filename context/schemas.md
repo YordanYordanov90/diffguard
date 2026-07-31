@@ -21,6 +21,7 @@ FindingLifecycle  = "open" | "resolved" | "dismissed"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 FeedbackAction    = "valid" | "dismiss" | "false_positive"
 LearningStatus    = "active" | "archived"
+LearningAuditAction = "edited" | "archived" | "reactivated"
 ```
 
 ## Database (Drizzle / Postgres)
@@ -191,7 +192,32 @@ Initial scope is repository-only. Guidance is bounded (≤500 chars), stored as
 plain text, and always treated as untrusted add-only prompt context. Active
 quota: 25 per repository. Created only by explicit
 `@diffguard remember: <preference>` with write/maintain/admin permission.
-Archive by default (Feature 32 owns governance UI).
+Feature 32 dashboard governance can edit guidance, archive, and reactivate
+with a minimal audit trail.
+
+```ts
+// Feature 32 governance columns on repository_learnings
+last_modified_by  text NULL
+last_modified_at  timestamptz NULL
+last_action       LearningAuditAction NULL  // edited | archived | reactivated
+```
+
+### repository_learning_audits (Feature 32)
+
+```ts
+id                uuid PK DEFAULT gen_random_uuid()
+learning_id       uuid NOT NULL FK -> repository_learnings.id (cascade)
+installation_id   bigint NOT NULL FK -> installations.id (cascade)
+repository_id     bigint NOT NULL FK -> repositories.id (cascade)
+actor_login       text NOT NULL
+action            LearningAuditAction NOT NULL  // edited | archived | reactivated
+created_at        timestamptz NOT NULL DEFAULT now()
+
+INDEX (learning_id, created_at)
+INDEX (installation_id, repository_id)
+```
+
+Never stores guidance text in the audit row. Append-only; used for attribution.
 
 ### Inline review comments (Feature 26 — runtime, not a table)
 
@@ -543,6 +569,7 @@ InteractionStatus = "queued" | "running" | "completed" | "failed" | "skipped"
 ```ts
 FeedbackAction        = "valid" | "dismiss" | "false_positive"
 LearningStatus        = "active" | "archived"
+LearningAuditAction   = "edited" | "archived" | "reactivated"
 IssueAssessmentStatus = "addressed" | "not_addressed" | "unclear"
 ```
 

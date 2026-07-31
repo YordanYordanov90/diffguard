@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import {
+  BookMarked,
   FolderGit2,
   GitPullRequest,
   LayoutDashboard,
@@ -27,6 +28,7 @@ const navigation = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/reviews", label: "Reviews", icon: GitPullRequest },
   { href: "/dashboard/repositories", label: "Repositories", icon: FolderGit2 },
+  { href: "/dashboard/learnings", label: "Learnings", icon: BookMarked },
 ] as const;
 
 function isActivePath(pathname: string, href: string) {
