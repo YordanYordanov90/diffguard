@@ -101,6 +101,7 @@ Primary navigation contains only live destinations:
 | Overview       | `/dashboard`              | Coverage, recent activity, attention     |
 | Reviews        | `/dashboard/reviews`      | Full review history and review detail    |
 | Repositories   | `/dashboard/repositories` | Installed repositories and GitHub access |
+| Learnings      | `/dashboard/learnings`    | Govern repository preferences (Feature 32) |
 
 Do not add Settings, Billing, Team, Analytics, or Documentation as inactive
 placeholders. Add a destination only when its feature exists.
@@ -128,11 +129,21 @@ selection.
 │  Overview          │  Primary operational content                  │
 │  Reviews           │                                               │
 │  Repositories      │                                               │
-│                    │                                               │
+│  Learnings         │                                               │
 │                    │                                               │
 │  GitHub user       │                                               │
 └────────────────────┴───────────────────────────────────────────────┘
 ```
+
+## Learnings (Feature 32)
+
+Operational governance for explicit repository preferences. Grouped list with
+repository filter, status filter, and text search. Each row shows preference
+text as plain text (never HTML), status, creator, usage, last change audit, and
+source PR when known. Edit, archive, and reactivate use Server Actions with a
+confirmation step for status changes. Mutations re-check GitHub write/maintain/
+admin permission; dashboard visibility alone is not enough.
+
 
 Onboarding is intentionally different: before GitHub authorization or the
 first installation, keep the existing focused full-width setup panel. Do not

@@ -106,6 +106,15 @@ export const learningStatusEnum = pgEnum("learning_status", [
 
 export type LearningStatus = (typeof learningStatusEnum.enumValues)[number];
 
+export const learningAuditActionEnum = pgEnum("learning_audit_action", [
+  "edited",
+  "archived",
+  "reactivated",
+]);
+
+export type LearningAuditAction =
+  (typeof learningAuditActionEnum.enumValues)[number];
+
 export const installations = pgTable("installations", {
   id: bigint("id", { mode: "number" }).primaryKey(),
   accountLogin: text("account_login").notNull(),
@@ -327,6 +336,13 @@ export const repositoryLearnings = pgTable(
     usageCount: integer("usage_count").notNull().default(0),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
+    /** Latest governance mutation actor (Feature 32). */
+    lastModifiedBy: text("last_modified_by"),
+    lastModifiedAt: timestamp("last_modified_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastAction: learningAuditActionEnum("last_action"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -343,6 +359,38 @@ export const repositoryLearnings = pgTable(
       table.installationId,
       table.repositoryId,
       table.status,
+    ),
+  ],
+);
+
+/** Minimal governance audit trail for learning mutations (Feature 32). */
+export const repositoryLearningAudits = pgTable(
+  "repository_learning_audits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    learningId: uuid("learning_id")
+      .notNull()
+      .references(() => repositoryLearnings.id, { onDelete: "cascade" }),
+    installationId: bigint("installation_id", { mode: "number" })
+      .notNull()
+      .references(() => installations.id, { onDelete: "cascade" }),
+    repositoryId: bigint("repository_id", { mode: "number" })
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    actorLogin: text("actor_login").notNull(),
+    action: learningAuditActionEnum("action").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("repository_learning_audits_learning_created_idx").on(
+      table.learningId,
+      table.createdAt,
+    ),
+    index("repository_learning_audits_tenant_repo_idx").on(
+      table.installationId,
+      table.repositoryId,
     ),
   ],
 );

@@ -13,10 +13,13 @@ import {
   findingFeedback,
   installations,
   repositories,
+  repositoryLearningAudits,
   repositoryLearnings,
   reviewFindings,
   reviews,
   type FeedbackAction,
+  type LearningAuditAction,
+  type LearningStatus,
   type ReviewMode,
   type FindingLifecycle,
   type SkipReason,
@@ -1316,12 +1319,225 @@ export async function listActiveRepositoryLearnings(
   }));
 }
 
+async function appendLearningAudit(
+  input: {
+    learningId: string;
+    installationId: number;
+    repositoryId: number;
+    actorLogin: string;
+    action: LearningAuditAction;
+  },
+  database: Database,
+) {
+  await database.insert(repositoryLearningAudits).values({
+    learningId: input.learningId,
+    installationId: input.installationId,
+    repositoryId: input.repositoryId,
+    actorLogin: input.actorLogin,
+    action: input.action,
+  });
+}
+
+export type DashboardLearningRow = {
+  id: string;
+  installationId: number;
+  repositoryId: number;
+  repositoryFullName: string;
+  guidance: string;
+  status: LearningStatus;
+  createdBy: string;
+  sourceFindingId: string | null;
+  sourceCommentId: number | null;
+  sourcePrNumber: number | null;
+  usageCount: number;
+  lastUsedAt: Date | null;
+  archivedAt: Date | null;
+  lastModifiedBy: string | null;
+  lastModifiedAt: Date | null;
+  lastAction: LearningAuditAction | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/**
+ * Tenant-scoped learning inventory for the dashboard.
+ * installationIds must come from GitHub-derived access only.
+ */
+export async function listRepositoryLearningsByInstallations(
+  installationIds: number[],
+  database: Database = defaultDb,
+): Promise<DashboardLearningRow[]> {
+  if (installationIds.length === 0) return [];
+
+  const rows = await database
+    .select({
+      id: repositoryLearnings.id,
+      installationId: repositoryLearnings.installationId,
+      repositoryId: repositoryLearnings.repositoryId,
+      repositoryFullName: repositories.fullName,
+      guidance: repositoryLearnings.guidance,
+      status: repositoryLearnings.status,
+      createdBy: repositoryLearnings.createdBy,
+      sourceFindingId: repositoryLearnings.sourceFindingId,
+      sourceCommentId: repositoryLearnings.sourceCommentId,
+      sourcePrNumber: reviewFindings.prNumber,
+      usageCount: repositoryLearnings.usageCount,
+      lastUsedAt: repositoryLearnings.lastUsedAt,
+      archivedAt: repositoryLearnings.archivedAt,
+      lastModifiedBy: repositoryLearnings.lastModifiedBy,
+      lastModifiedAt: repositoryLearnings.lastModifiedAt,
+      lastAction: repositoryLearnings.lastAction,
+      createdAt: repositoryLearnings.createdAt,
+      updatedAt: repositoryLearnings.updatedAt,
+    })
+    .from(repositoryLearnings)
+    .innerJoin(
+      repositories,
+      and(
+        eq(repositories.id, repositoryLearnings.repositoryId),
+        eq(repositories.installationId, repositoryLearnings.installationId),
+      ),
+    )
+    .leftJoin(
+      reviewFindings,
+      and(
+        eq(reviewFindings.id, repositoryLearnings.sourceFindingId),
+        eq(reviewFindings.installationId, repositoryLearnings.installationId),
+        eq(reviewFindings.repositoryId, repositoryLearnings.repositoryId),
+      ),
+    )
+    .where(inArray(repositoryLearnings.installationId, installationIds))
+    .orderBy(desc(repositoryLearnings.createdAt));
+
+  return rows.map((row) => ({
+    ...row,
+    guidance: row.guidance.trim(),
+    sourcePrNumber: row.sourcePrNumber ?? null,
+  }));
+}
+
+/**
+ * Load one learning only when it belongs to the allowlisted installations.
+ */
+export async function getRepositoryLearningByIdForInstallations(
+  learningId: string,
+  installationIds: number[],
+  database: Database = defaultDb,
+) {
+  if (installationIds.length === 0) return null;
+
+  const [row] = await database
+    .select({
+      id: repositoryLearnings.id,
+      installationId: repositoryLearnings.installationId,
+      repositoryId: repositoryLearnings.repositoryId,
+      repositoryFullName: repositories.fullName,
+      guidance: repositoryLearnings.guidance,
+      status: repositoryLearnings.status,
+      contentHash: repositoryLearnings.contentHash,
+    })
+    .from(repositoryLearnings)
+    .innerJoin(
+      repositories,
+      and(
+        eq(repositories.id, repositoryLearnings.repositoryId),
+        eq(repositories.installationId, repositoryLearnings.installationId),
+      ),
+    )
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        inArray(repositoryLearnings.installationId, installationIds),
+      ),
+    )
+    .limit(1);
+
+  return row ?? null;
+}
+
+export type UpdateRepositoryLearningGuidanceResult =
+  | { status: "updated"; learning: typeof repositoryLearnings.$inferSelect }
+  | { status: "not_found" }
+  | { status: "invalid_guidance" }
+  | { status: "duplicate" };
+
+/**
+ * Edit learning text only. Does not change creator, usage, or source linkage.
+ */
+export async function updateRepositoryLearningGuidance(
+  installationId: number,
+  repositoryId: number,
+  learningId: string,
+  guidance: string,
+  actorLogin: string,
+  database: Database = defaultDb,
+): Promise<UpdateRepositoryLearningGuidanceResult> {
+  const trimmed = guidance.trim();
+  if (!trimmed || trimmed.length > LEARNING_GUIDANCE_MAX_CHARS) {
+    return { status: "invalid_guidance" };
+  }
+
+  const contentHash = computeLearningContentHash(trimmed);
+  const now = new Date();
+
+  // Reject if another learning on this repo already owns the hash.
+  const [hashOwner] = await database
+    .select({ id: repositoryLearnings.id })
+    .from(repositoryLearnings)
+    .where(
+      and(
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+        eq(repositoryLearnings.contentHash, contentHash),
+        ne(repositoryLearnings.id, learningId),
+      ),
+    )
+    .limit(1);
+  if (hashOwner) return { status: "duplicate" };
+
+  const [learning] = await database
+    .update(repositoryLearnings)
+    .set({
+      guidance: trimmed,
+      contentHash,
+      lastModifiedBy: actorLogin,
+      lastModifiedAt: now,
+      lastAction: "edited",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(repositoryLearnings.id, learningId),
+        eq(repositoryLearnings.installationId, installationId),
+        eq(repositoryLearnings.repositoryId, repositoryId),
+      ),
+    )
+    .returning();
+
+  if (!learning) return { status: "not_found" };
+
+  await appendLearningAudit(
+    {
+      learningId,
+      installationId,
+      repositoryId,
+      actorLogin,
+      action: "edited",
+    },
+    database,
+  );
+
+  return { status: "updated", learning };
+}
+
 export async function archiveRepositoryLearning(
   installationId: number,
   repositoryId: number,
   learningId: string,
+  options: { actorLogin?: string } = {},
   database: Database = defaultDb,
 ) {
+  const actorLogin = options.actorLogin;
   const now = new Date();
   const [learning] = await database
     .update(repositoryLearnings)
@@ -1329,6 +1545,13 @@ export async function archiveRepositoryLearning(
       status: "archived",
       archivedAt: now,
       updatedAt: now,
+      ...(actorLogin
+        ? {
+            lastModifiedBy: actorLogin,
+            lastModifiedAt: now,
+            lastAction: "archived" as const,
+          }
+        : {}),
     })
     .where(
       and(
@@ -1339,6 +1562,20 @@ export async function archiveRepositoryLearning(
       ),
     )
     .returning();
+
+  if (learning && actorLogin) {
+    await appendLearningAudit(
+      {
+        learningId,
+        installationId,
+        repositoryId,
+        actorLogin,
+        action: "archived",
+      },
+      database,
+    );
+  }
+
   return learning ?? null;
 }
 
@@ -1350,12 +1587,14 @@ export async function reactivateRepositoryLearning(
   installationId: number,
   repositoryId: number,
   learningId: string,
+  options: { actorLogin?: string } = {},
   database: Database = defaultDb,
 ): Promise<
   | { status: "reactivated"; learning: typeof repositoryLearnings.$inferSelect }
   | { status: "not_found" }
   | { status: "quota_exceeded" }
 > {
+  const actorLogin = options.actorLogin;
   const activeCountRows = await database
     .select({ id: repositoryLearnings.id })
     .from(repositoryLearnings)
@@ -1377,6 +1616,13 @@ export async function reactivateRepositoryLearning(
       status: "active",
       archivedAt: null,
       updatedAt: now,
+      ...(actorLogin
+        ? {
+            lastModifiedBy: actorLogin,
+            lastModifiedAt: now,
+            lastAction: "reactivated" as const,
+          }
+        : {}),
     })
     .where(
       and(
@@ -1399,6 +1645,19 @@ export async function reactivateRepositoryLearning(
   if (overQuota) {
     // Row was active only briefly; keep it archived and reject.
     return { status: "quota_exceeded" };
+  }
+
+  if (actorLogin) {
+    await appendLearningAudit(
+      {
+        learningId,
+        installationId,
+        repositoryId,
+        actorLogin,
+        action: "reactivated",
+      },
+      database,
+    );
   }
 
   return { status: "reactivated", learning };

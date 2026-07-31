@@ -8,8 +8,8 @@ Update this file after every meaningful implementation change.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Features 22 and 24
   are implemented with acceptance verification still pending, Feature 23 is
-  underway, Features 25–26 and 28–31 (findings through repository learnings)
-  are implemented, and Features 32–34 remain.
+  underway, Features 25–26 and 28–32 (findings through learnings governance)
+  are implemented, and Features 33–34 remain.
 
 ## Current Goal
 
@@ -317,6 +317,14 @@ Update this file after every meaningful implementation change.
   prompt-injection, and worker permission tests pass. Remaining: dogfood
   `@diffguard remember:` on a scratch PR and confirm the next review supplies
   learning ids without logging guidance text.
+- Feature 32 (Learnings Governance Dashboard) — implementation completed
+  2026-07-31: `/dashboard/learnings` destination, allowlist-scoped inventory
+  with repo/status/search filters, Server Actions for edit/archive/reactivate
+  with live GitHub write-permission re-check, plain-text guidance rendering,
+  confirmation for status changes, and `repository_learning_audits` plus
+  last-modified columns. Migration `0009_learning_governance.sql` (applied to
+  Neon). Access and mutation tests pass. Remaining: dogfood governance flows
+  in the dashboard after deploy.
 
 ## In Progress
 
@@ -338,9 +346,7 @@ Update this file after every meaningful implementation change.
    - Feature 29: enable `Issues: read` on the GitHub App and e2e-verify on a
      scratch PR with measurable acceptance criteria;
    - Feature 30: dogfood valid + false-positive signals on a scratch PR;
-   - Feature 31: apply `0008_repository_learnings` on Neon and dogfood
-     `@diffguard remember:` → next review;
-   - Feature 32: governed repository learnings UI/archive;
+   - Feature 31–32: dogfood remember + dashboard edit/archive/reactivate;
    - Features 33–34: PR-scoped AI conversation as the final feature.
 
 ## Open Questions
