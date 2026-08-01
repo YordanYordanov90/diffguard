@@ -2221,14 +2221,16 @@ export async function setPrReviewPaused(
       updatedAt: now,
     })
     .onConflictDoUpdate({
-      target: [prReviewControls.repositoryId, prReviewControls.prNumber],
+      target: [
+        prReviewControls.installationId,
+        prReviewControls.repositoryId,
+        prReviewControls.prNumber,
+      ],
       set: {
         paused,
         updatedBy,
         updatedAt: now,
-        installationId,
       },
-      setWhere: eq(prReviewControls.installationId, installationId),
     })
     .returning();
 

@@ -54,4 +54,18 @@ export const CONVERSATION_THREAD_BODY_CHAR_LIMIT = 2_000;
 export const CHAT_OUTPUT_TOKEN_BUDGET = 2_000;
 /** Max characters of diff included in a chat prompt. */
 export const CHAT_DIFF_CHAR_LIMIT = 40_000;
+/** Max open findings included in one chat prompt. */
+export const CHAT_FINDING_CAP = 8;
+/** Max serialized finding characters included in one chat prompt. */
+export const CHAT_FINDINGS_CHAR_LIMIT = 8_000;
+/** Max PR body characters included in one chat prompt. */
+export const CHAT_PR_BODY_CHAR_LIMIT = 4_000;
+/** Max question characters included in one chat prompt. */
+export const CHAT_QUESTION_CHAR_LIMIT = 2_000;
+/** Max PR title characters included in one chat prompt. */
+export const CHAT_PR_TITLE_CHAR_LIMIT = 500;
+/** Max comment-thread characters included in one chat prompt. */
+export const CHAT_THREAD_CHAR_LIMIT = 16_000;
+/** Hard character bound for the assembled chat user prompt. */
+export const CHAT_PROMPT_CHAR_LIMIT = 90_000;
 export const DEFAULT_MODEL = "openai/gpt-5.4-mini";

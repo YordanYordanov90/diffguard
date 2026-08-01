@@ -248,6 +248,21 @@ function isForbidden(error: unknown) {
   return error instanceof RequestError && error.status === 403;
 }
 
+/**
+ * GitHub comment failures that are not expected to succeed on redelivery.
+ * Rate-limit and server failures remain retryable for QStash.
+ */
+export function isNonRetryableIssueCommentError(error: unknown): boolean {
+  if (!(error instanceof RequestError)) return false;
+  if ([400, 401, 404, 422].includes(error.status)) return true;
+  if (error.status !== 403) return false;
+
+  const headers = error.response?.headers as
+    | Record<string, string | number | undefined>
+    | undefined;
+  return headers?.["retry-after"] === undefined && headers?.["x-ratelimit-remaining"] !== "0";
+}
+
 function isUnsupportedInstructionResponse(error: unknown) {
   return (
     error instanceof RequestError &&

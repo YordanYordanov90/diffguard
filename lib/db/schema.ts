@@ -474,7 +474,7 @@ export const prReviewControls = pgTable(
   (table) => [
     primaryKey({
       name: "pr_review_controls_pk",
-      columns: [table.repositoryId, table.prNumber],
+      columns: [table.installationId, table.repositoryId, table.prNumber],
     }),
     index("pr_review_controls_tenant_pr_idx").on(
       table.installationId,

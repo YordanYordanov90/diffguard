@@ -42,6 +42,7 @@ function createDependencies(
     commentBody?: string;
     commentStatus?: "fetched" | "missing" | "unavailable";
     prStatus?: "accessible" | "missing" | "unavailable";
+    prState?: "open" | "closed";
     permission?: "admin" | "maintain" | "write" | "triage" | "read" | "none";
   } = {},
 ) {
@@ -113,7 +114,7 @@ function createDependencies(
                 title: "Harden auth",
                 body: "Please review.",
                 headSha,
-                state: "open",
+                state: overrides.prState ?? "open",
               },
       ),
       listIssueComments: vi.fn().mockResolvedValue({
@@ -146,9 +147,11 @@ function createDependencies(
 }
 
 describe("actor permissions", () => {
-  it("allows collaborators/authors for chat and normal review", () => {
+  it("allows read-only chat while restricting manual reviews", () => {
     expect(actorMayStartConversation("read", "reader", "author")).toBe(true);
-    expect(actorMayRunControl("review", "read", "reader", "author")).toBe(true);
+    expect(actorMayRunControl("review", "read", "reader", "author")).toBe(false);
+    expect(actorMayRunControl("review", "none", "author", "author")).toBe(true);
+    expect(actorMayRunControl("review", "write", "reviewer", "author")).toBe(true);
     expect(actorMayRunControl("pause", "read", "reader", "author")).toBe(false);
     expect(actorMayRunControl("full_review", "write", "dev", "author")).toBe(true);
   });
@@ -277,6 +280,22 @@ describe("conversation worker", () => {
     expect(dependencies.reviewPublisher.publishJSON).not.toHaveBeenCalled();
   });
 
+  it("skips unauthorized normal review from a read-only collaborator", async () => {
+    const dependencies = createDependencies({
+      commentBody: "@diffguard review",
+      permission: "read",
+    });
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { status: "skipped", reason: "unauthorized" },
+    });
+    expect(dependencies.reviewPublisher.publishJSON).not.toHaveBeenCalled();
+  });
+
   it("skips deleted comments and inaccessible PRs", async () => {
     const deleted = createDependencies({ commentStatus: "missing" });
     await handleConversationWorker(signedRequest(baseJob), deleted);
@@ -286,13 +305,32 @@ describe("conversation worker", () => {
       "comment_deleted",
     );
 
-    const closed = createDependencies({ prStatus: "missing" });
+    const closed = createDependencies({ prState: "closed" });
     await handleConversationWorker(signedRequest(baseJob), closed);
     expect(closed.queries.markInteractionSkipped).toHaveBeenCalledWith(
       42,
       baseJob.interactionId,
-      "pr_inaccessible",
+      "pr_closed",
     );
+    expect(closed.generateChat).not.toHaveBeenCalled();
+  });
+
+  it("keeps transient reply failures retryable", async () => {
+    const dependencies = createDependencies();
+    dependencies.github.createIssueComment.mockRejectedValue(new Error("timeout"));
+
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    expect(response.status).toBe(500);
+    expect(dependencies.queries.markInteractionFailed).toHaveBeenCalledWith(
+      42,
+      baseJob.interactionId,
+      "processing_failed",
+    );
+    expect(dependencies.queries.markInteractionCompleted).not.toHaveBeenCalled();
   });
 
   it("is idempotent for already terminal interactions", async () => {

@@ -2,11 +2,49 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createGitHubClient,
+  isNonRetryableIssueCommentError,
   type GitHubClientDependencies,
   type InstallationClient,
 } from "@/lib/github/client";
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
+
+function requestErrorOptions(headers: Record<string, string> = {}) {
+  return {
+    response: {
+      status: 403,
+      headers,
+      url: "https://api.github.com",
+      data: {},
+    },
+    request: { method: "POST" as const, url: "https://api.github.com", headers: {} },
+  };
+}
+
+describe("GitHub comment error classification", () => {
+  it("keeps permission failures terminal but rate limits retryable", async () => {
+    const { RequestError } = await import("octokit");
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError("Forbidden", 403, requestErrorOptions()),
+      ),
+    ).toBe(true);
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError(
+          "Rate limited",
+          403,
+          requestErrorOptions({ "x-ratelimit-remaining": "0" }),
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError("Server error", 500, requestErrorOptions()),
+      ),
+    ).toBe(false);
+  });
+});
 
 function createMockClient(
   instructionResponse: unknown = {

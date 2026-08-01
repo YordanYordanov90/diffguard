@@ -19,9 +19,9 @@ GitHub, while keeping chat subordinate to the automatic security review.
   - `@diffguard full review` — full PR review at the current head;
   - `@diffguard pause` — stop automatic reviews for this PR;
   - `@diffguard resume` — resume automatic reviews.
-- Require write/maintain/admin permission for pause, resume, and full review.
-  The PR author or a collaborator may request a normal review or ask a
-  read-only question within rate limits.
+- Require write/maintain/admin permission for pause, resume, full review, and
+  normal review commands. The PR author may request any review command, while
+  read-only collaborators may ask questions within rate limits.
 - Add a tenant-scoped PR control record for paused state and audit metadata.
   The existing pull-request trigger checks this state before queueing; manual
   review commands still pass idempotency, daily-cap, and stale-head checks.
@@ -32,10 +32,12 @@ GitHub, while keeping chat subordinate to the automatic security review.
   - a short GitHub comment thread;
   - the relevant diff and smart context from Features 22–23.
 - Use a structured response contract with a concise answer and validated
-  file/line references. A reference not present in the supplied context is
-  removed rather than guessed.
-- Reply once to the source GitHub comment. State uncertainty plainly when the
-  bounded context cannot support an answer.
+  file/line references. A reference not present in the supplied diff or
+  finding context is removed rather than guessed. Finding context and the
+  assembled chat prompt have hard aggregate bounds.
+- Reply once to the source GitHub comment. Transient GitHub reply failures are
+  retryable; confirmed non-retryable permission failures are terminal. State
+  uncertainty plainly when the bounded context cannot support an answer.
 - Route `remember`, `valid`, `dismiss`, and `false-positive` through Features
   30–31 rather than letting the conversational model mutate state.
 - Track chat cost separately from automatic reviews so chat cannot consume or

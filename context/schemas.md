@@ -641,7 +641,7 @@ paused          boolean NOT NULL DEFAULT false
 updated_by      text NOT NULL
 updated_at      timestamptz NOT NULL DEFAULT now()
 
-PRIMARY KEY (repository_id, pr_number)
+PRIMARY KEY (installation_id, repository_id, pr_number)
 INDEX (installation_id, repository_id, pr_number)
 ```
 
@@ -657,7 +657,7 @@ ChatResponse = {
   references: {
     file: string
     line: number | null
-  }[]                         // allowlisted against supplied diff files only
+  }[]                         // allowlisted against supplied files and lines
 }
 ```
 

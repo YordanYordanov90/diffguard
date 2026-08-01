@@ -351,6 +351,12 @@ Update this file after every meaningful implementation change.
   Migration `0011_pr_review_controls.sql` (applied to Neon). Command, chat,
   worker, and pause trigger tests pass. Remaining: dogfood pause/resume,
   recheck, and one real finding question after Issues permission approval.
+- PR #64 review feedback fixes — completed locally: manual review
+  commands are restricted to PR authors and write-capable collaborators;
+  chat references, findings, and prompt size are bounded; transient reply
+  failures remain retryable; closed PRs are skipped; and pause controls use a
+  tenant-complete primary key with generated migration `0012` (pending
+  deployment).
 
 ## In Progress
 

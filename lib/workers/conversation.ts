@@ -30,12 +30,15 @@ import {
   fetchPrDiff,
   fetchPullRequestAccessibility,
   getCollaboratorPermission,
+  isNonRetryableIssueCommentError,
   listIssueComments,
   type RepositoryPermission,
 } from "@/lib/github/client";
 import { getReviewWorkerUrl } from "@/lib/github/review-trigger";
 import {
   buildChatPrompt,
+  buildChatReferenceAllowlist,
+  boundChatFindings,
   filterChatReferences,
   formatChatReply,
 } from "@/lib/review/chat";
@@ -193,8 +196,12 @@ export function actorMayRunControl(
   if (controlRequiresWriteAccess(action)) {
     return WRITE_PERMISSIONS.has(permission);
   }
-  // Normal review: PR author or any collaborator.
-  return actorMayStartConversation(permission, actorLogin, prAuthorLogin);
+  // Manual reviews consume the installation's review budget.
+  const isPrAuthor =
+    actorLogin.localeCompare(prAuthorLogin, undefined, {
+      sensitivity: "accent",
+    }) === 0;
+  return isPrAuthor || WRITE_PERMISSIONS.has(permission);
 }
 
 export function getConversationReplyMarker(job: ConversationJob) {
@@ -233,8 +240,9 @@ async function postReplyOnce(
       job.prNumber,
       withReplyMarker(job, body),
     );
-  } catch {
-    // Issues: write may be missing; interaction still completes.
+  } catch (error) {
+    if (isNonRetryableIssueCommentError(error)) return;
+    throw error;
   }
 }
 
@@ -417,6 +425,10 @@ async function handleChatQuestion(
       : processed.diff;
 
   const allowedFiles = processed.fileTree;
+  const allowedLines = buildChatReferenceAllowlist(
+    diffForPrompt,
+    openFindings.map((finding) => ({ file: finding.file, line: finding.line })),
+  );
   const linkedIssues = (latestReview?.linkedIssueAssessments ?? []).map(
     (assessment) => ({
       issueNumber: assessment.issueNumber,
@@ -432,15 +444,17 @@ async function handleChatQuestion(
     prBody: pr.body,
     headSha: pr.headSha,
     diff: diffForPrompt,
-    findings: openFindings.map((finding) => ({
-      id: finding.id,
-      file: finding.file,
-      line: finding.line,
-      severity: finding.severity,
-      title: finding.title,
-      detail: finding.detail.slice(0, 1_000),
-      status: finding.status,
-    })),
+    findings: boundChatFindings(
+      openFindings.map((finding) => ({
+        id: finding.id,
+        file: finding.file,
+        line: finding.line,
+        severity: finding.severity,
+        title: finding.title,
+        detail: finding.detail,
+        status: finding.status,
+      })),
+    ),
     linkedIssues,
     thread: boundThreadComments(
       threadComments.map((comment, index) => ({
@@ -461,7 +475,7 @@ async function handleChatQuestion(
       { model },
       { deadline: startedAt + LLM_TIMEOUT_MS },
     );
-    const filtered = filterChatReferences(generated.output, allowedFiles);
+    const filtered = filterChatReferences(generated.output, allowedFiles, allowedLines);
     await postReplyOnce(
       job,
       formatChatReply(filtered),
@@ -577,6 +591,14 @@ async function processConversationJob(
       status: "skipped" as const,
       reason: prAccess.status === "missing" ? "pr_inaccessible" : "pr_unavailable",
     };
+  }
+  if (prAccess.state.toLowerCase() !== "open") {
+    await dependencies.queries.markInteractionSkipped(
+      job.installationId,
+      job.interactionId,
+      "pr_closed",
+    );
+    return { status: "skipped" as const, reason: "pr_closed" };
   }
 
   const sourceAuthorMatchesJob =
