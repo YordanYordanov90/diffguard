@@ -14,6 +14,7 @@ import {
   findingFeedback,
   installations,
   prInteractions,
+  prReviewControls,
   repositories,
   repositoryLearningAudits,
   repositoryLearnings,
@@ -322,6 +323,7 @@ export async function getLatestCompletedReviewForPr(
       headSha: reviews.headSha,
       commentId: reviews.commentId,
       updatedAt: reviews.updatedAt,
+      linkedIssueAssessments: reviews.linkedIssueAssessments,
     })
     .from(reviews)
     .where(
@@ -2161,4 +2163,76 @@ export async function countConversationsToday(
     );
 
   return rows.length;
+}
+
+// ---------------------------------------------------------------------------
+// Feature 34 — PR review controls (pause / resume)
+// ---------------------------------------------------------------------------
+
+export async function isPrReviewPaused(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  database: Database = defaultDb,
+): Promise<boolean> {
+  const [row] = await database
+    .select({ paused: prReviewControls.paused })
+    .from(prReviewControls)
+    .where(
+      and(
+        eq(prReviewControls.installationId, installationId),
+        eq(prReviewControls.repositoryId, repositoryId),
+        eq(prReviewControls.prNumber, prNumber),
+      ),
+    )
+    .limit(1);
+  return row?.paused === true;
+}
+
+export async function setPrReviewPaused(
+  installationId: number,
+  repositoryId: number,
+  prNumber: number,
+  paused: boolean,
+  updatedBy: string,
+  database: Database = defaultDb,
+) {
+  const [repository] = await database
+    .select({ id: repositories.id })
+    .from(repositories)
+    .where(
+      and(
+        eq(repositories.id, repositoryId),
+        eq(repositories.installationId, installationId),
+      ),
+    )
+    .limit(1);
+  if (!repository) return null;
+
+  const now = new Date();
+  const [row] = await database
+    .insert(prReviewControls)
+    .values({
+      installationId,
+      repositoryId,
+      prNumber,
+      paused,
+      updatedBy,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        prReviewControls.installationId,
+        prReviewControls.repositoryId,
+        prReviewControls.prNumber,
+      ],
+      set: {
+        paused,
+        updatedBy,
+        updatedAt: now,
+      },
+    })
+    .returning();
+
+  return row ?? null;
 }

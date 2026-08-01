@@ -8,8 +8,8 @@ Update this file after every meaningful implementation change.
 - Dashboard operations expansion (Features 18–21) is implemented.
 - Review-quality expansion is specified as Features 22–34; Features 22 and 24
   are implemented with acceptance verification still pending, Feature 23 is
-  underway, Features 25–26 and 28–33 (findings through conversation boundary)
-  are implemented, and Feature 34 remains as the final chat feature.
+  underway, and Features 25–26 and 28–34 (findings through PR-scoped AI chat)
+  are implemented — the review-quality roadmap is complete pending dogfood.
 
 ## Current Goal
 
@@ -342,6 +342,21 @@ Update this file after every meaningful implementation change.
   scoped, and daily-cap reservation is serialized per installation. Focused
   conversation trigger, worker, and GitHub client tests pass; full verification
   remains to run on the fix branch.
+- Feature 34 (PR-Scoped AI Chat & Review Controls) — implementation completed
+  2026-07-31: deterministic `@diffguard review|full review|pause|resume`
+  commands, free-form PR chat with structured `ChatResponse`, reference
+  allowlisting, `pr_review_controls` pause state checked by automatic review
+  trigger, manual review enqueue with forceFullReview, chat cost tracked on
+  `pr_interactions` only, feedback-command redirect to inline Features 30–31.
+  Migration `0011_pr_review_controls.sql` (applied to Neon). Command, chat,
+  worker, and pause trigger tests pass. Remaining: dogfood pause/resume,
+  recheck, and one real finding question after Issues permission approval.
+- PR #64 review feedback fixes — completed locally: manual review
+  commands are restricted to PR authors and write-capable collaborators;
+  chat references, findings, and prompt size are bounded; transient reply
+  failures remain retryable; closed PRs are skipped; and pause controls use a
+  tenant-complete primary key with generated migration `0012` (pending
+  deployment).
 
 ## In Progress
 
@@ -359,14 +374,13 @@ Update this file after every meaningful implementation change.
 
 1. Install `diffguard-dev` on owner's real repositories, dogfood the refined
    dashboard at mobile/tablet/desktop widths, then invite 4–5 beta users.
-2. Continue the review-quality roadmap in dependency order:
+2. Dogfood remaining review-quality surfaces:
    - Feature 29: enable `Issues: read` on the GitHub App and e2e-verify on a
      scratch PR with measurable acceptance criteria;
-   - Feature 30: dogfood valid + false-positive signals on a scratch PR;
-   - Feature 31–32: dogfood remember + dashboard edit/archive/reactivate;
-   - Feature 33: GitHub App Issues permissions + `issue_comment` subscription,
-     then dogfood boundary ack on a scratch PR;
-   - Feature 34: PR-scoped AI chat and review controls (final feature).
+   - Feature 30–32: dogfood feedback signals, remember, and learnings UI;
+   - Features 33–34: GitHub App Issues permissions + `issue_comment`
+     subscription, then dogfood pause/resume, manual review, and one PR chat
+     answer on a scratch install before beta re-approval.
 
 ## Open Questions
 

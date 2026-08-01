@@ -128,3 +128,17 @@ export type ConfirmedFinding = z.infer<typeof confirmedFindingSchema>;
 export type CandidateReviewOutput = z.infer<typeof candidateReviewOutputSchema>;
 export type FindingAdjudication = z.infer<typeof findingAdjudicationSchema>;
 export type AdjudicationOutput = z.infer<typeof adjudicationOutputSchema>;
+
+/** Feature 34 PR chat structured response. */
+export const chatReferenceSchema = z.object({
+  file: z.string().min(1).max(1_000),
+  line: z.number().int().positive().nullable(),
+});
+
+export const chatResponseSchema = z.object({
+  answer: z.string().min(1).max(4_000),
+  references: z.array(chatReferenceSchema).max(10).default([]),
+});
+
+export type ChatReference = z.infer<typeof chatReferenceSchema>;
+export type ChatResponse = z.infer<typeof chatResponseSchema>;

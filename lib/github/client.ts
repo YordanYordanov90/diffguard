@@ -56,6 +56,10 @@ const pullResponseSchema = z.object({
 
 const pullRequestAccessibilitySchema = z.object({
   user: z.object({ login: z.string().min(1) }),
+  title: z.string(),
+  body: z.string().nullable().optional(),
+  state: z.string().min(1),
+  head: z.object({ sha: z.string().min(1) }),
 });
 
 const repositoryTreeResponseSchema = z.object({
@@ -242,6 +246,21 @@ function isNotFound(error: unknown) {
 
 function isForbidden(error: unknown) {
   return error instanceof RequestError && error.status === 403;
+}
+
+/**
+ * GitHub comment failures that are not expected to succeed on redelivery.
+ * Rate-limit and server failures remain retryable for QStash.
+ */
+export function isNonRetryableIssueCommentError(error: unknown): boolean {
+  if (!(error instanceof RequestError)) return false;
+  if ([400, 401, 404, 422].includes(error.status)) return true;
+  if (error.status !== 403) return false;
+
+  const headers = error.response?.headers as
+    | Record<string, string | number | undefined>
+    | undefined;
+  return headers?.["retry-after"] === undefined && headers?.["x-ratelimit-remaining"] !== "0";
 }
 
 function isUnsupportedInstructionResponse(error: unknown) {
@@ -875,7 +894,14 @@ export function createGitHubClient(
       repoFullName: string,
       prNumber: number,
     ): Promise<
-      | { status: "accessible"; authorLogin: string }
+      | {
+          status: "accessible";
+          authorLogin: string;
+          title: string;
+          body: string | null;
+          headSha: string;
+          state: string;
+        }
       | { status: "missing" | "unavailable" }
     > {
       const { owner, repo } = parseRepositoryName(repoFullName);
@@ -888,7 +914,14 @@ export function createGitHubClient(
         });
         const parsed = pullRequestAccessibilitySchema.safeParse(response.data);
         if (!parsed.success) return { status: "unavailable" };
-        return { status: "accessible", authorLogin: parsed.data.user.login };
+        return {
+          status: "accessible",
+          authorLogin: parsed.data.user.login,
+          title: parsed.data.title,
+          body: parsed.data.body ?? null,
+          headSha: parsed.data.head.sha,
+          state: parsed.data.state,
+        };
       } catch (error) {
         if (isNotFound(error)) return { status: "missing" };
         if (isForbidden(error)) return { status: "unavailable" };

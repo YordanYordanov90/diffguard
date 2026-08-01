@@ -2,11 +2,49 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createGitHubClient,
+  isNonRetryableIssueCommentError,
   type GitHubClientDependencies,
   type InstallationClient,
 } from "@/lib/github/client";
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
+
+function requestErrorOptions(headers: Record<string, string> = {}) {
+  return {
+    response: {
+      status: 403,
+      headers,
+      url: "https://api.github.com",
+      data: {},
+    },
+    request: { method: "POST" as const, url: "https://api.github.com", headers: {} },
+  };
+}
+
+describe("GitHub comment error classification", () => {
+  it("keeps permission failures terminal but rate limits retryable", async () => {
+    const { RequestError } = await import("octokit");
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError("Forbidden", 403, requestErrorOptions()),
+      ),
+    ).toBe(true);
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError(
+          "Rate limited",
+          403,
+          requestErrorOptions({ "x-ratelimit-remaining": "0" }),
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError("Server error", 500, requestErrorOptions()),
+      ),
+    ).toBe(false);
+  });
+});
 
 function createMockClient(
   instructionResponse: unknown = {
@@ -58,7 +96,15 @@ function createMockClient(
       return Promise.resolve({ data: "diff --git a/file.ts b/file.ts" });
     }
     if (route.includes("/pulls/")) {
-      return Promise.resolve({ data: { head: { sha } } });
+      return Promise.resolve({
+        data: {
+          head: { sha },
+          user: { login: "author" },
+          title: "Test PR",
+          body: null,
+          state: "open",
+        },
+      });
     }
     return Promise.resolve({ data: {} });
     },
@@ -494,12 +540,18 @@ describe("GitHub client", () => {
   });
 
   it("returns the current pull request author for conversation authorization", async () => {
-    const { client, request } = createMockClient();
-    request.mockResolvedValueOnce({ data: { user: { login: "author" } } });
+    const { client } = createMockClient();
 
     await expect(
       client.fetchPullRequestAccessibility(42, "owner/repo", 7),
-    ).resolves.toEqual({ status: "accessible", authorLogin: "author" });
+    ).resolves.toEqual({
+      status: "accessible",
+      authorLogin: "author",
+      title: "Test PR",
+      body: null,
+      headSha: sha,
+      state: "open",
+    });
   });
 
   it("verifies that an inline comment belongs to the requested PR", async () => {
