@@ -357,6 +357,12 @@ Update this file after every meaningful implementation change.
   failures remain retryable; closed PRs are skipped; and pause controls use a
   tenant-complete primary key with generated migration `0012` (pending
   deployment).
+- DiffGuard follow-up review fixes — implementation completed locally: manual review
+  commands now require write-capable permissions; the initial PR-control
+  migration declares the tenant-complete key; GitHub 403 classification uses
+  response messages; and review-cap insertion uses an installation advisory
+  lock. Migration `0012_curious_ultron.sql` remains the compatibility upgrade
+  for databases that already applied the earlier `0011` migration.
 
 ## In Progress
 

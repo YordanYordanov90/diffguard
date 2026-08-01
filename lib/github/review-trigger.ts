@@ -5,7 +5,6 @@ import type { ReviewJob } from "@/lib/review/job";
 import type { PullRequestEvent } from "./events";
 import {
   DEBOUNCE_SECONDS,
-  DAILY_REVIEW_CAP,
   RATE_LIMIT,
 } from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
@@ -193,19 +192,13 @@ export function createReviewTriggerHandler(
       return { status: "skipped", reason: "rate_limited" };
     }
 
-    const reviewsToday = await dependencies.queries.countReviewsToday(installationId);
-    if (reviewsToday >= DAILY_REVIEW_CAP) {
-      const queued = await dependencies.queries.createQueuedReview(job);
-      if (!queued.created || !queued.review) return { status: "duplicate" };
-      await dependencies.queries.markReviewSkipped(
-        installationId,
-        queued.review.id,
-        "daily_cap",
-      );
+    const queued = await dependencies.queries.createQueuedReview({
+      ...job,
+      enforceDailyCap: true,
+    });
+    if (queued.reason === "daily_cap") {
       return { status: "skipped", reason: "daily_cap" };
     }
-
-    const queued = await dependencies.queries.createQueuedReview(job);
     if (!queued.review) return { status: "duplicate" };
 
     if (!queued.created) {

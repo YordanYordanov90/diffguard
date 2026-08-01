@@ -195,9 +195,8 @@
 - Feature 34 extends the conversation worker with deterministic review
   controls (`review`, `full review`, `pause`, `resume`) parsed before any LLM
   call, and free-form PR chat via structured `ChatResponse`. Write/maintain/
-  admin is required for manual review, pause, and resume commands; the PR
-  author may request them regardless of collaborator permission, while
-  read-only collaborators may ask questions. `pr_review_controls`
+  admin is required for manual review, pause, and resume commands; read-only
+  collaborators may ask questions. `pr_review_controls`
   holds per-PR pause state checked by the automatic review trigger. Chat
   prompts delimit untrusted question, PR text, findings, thread, and diff
   sections; file/line references are allowlisted against the reviewed paths.

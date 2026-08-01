@@ -257,6 +257,16 @@ export function isNonRetryableIssueCommentError(error: unknown): boolean {
   if ([400, 401, 404, 422].includes(error.status)) return true;
   if (error.status !== 403) return false;
 
+  const message =
+    typeof error.response?.data === "object" &&
+    error.response.data !== null &&
+    "message" in error.response.data &&
+    typeof error.response.data.message === "string"
+      ? error.response.data.message.toLowerCase()
+      : "";
+  if (/rate limit|abuse detection|secondary rate limit/.test(message)) return false;
+  if (/permission|forbidden|not accessible by integration/.test(message)) return true;
+
   const headers = error.response?.headers as
     | Record<string, string | number | undefined>
     | undefined;

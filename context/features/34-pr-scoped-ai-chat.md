@@ -20,8 +20,8 @@ GitHub, while keeping chat subordinate to the automatic security review.
   - `@diffguard pause` — stop automatic reviews for this PR;
   - `@diffguard resume` — resume automatic reviews.
 - Require write/maintain/admin permission for pause, resume, full review, and
-  normal review commands. The PR author may request any review command, while
-  read-only collaborators may ask questions within rate limits.
+  normal review commands. Read-only collaborators, including PR authors, may
+  ask questions within rate limits.
 - Add a tenant-scoped PR control record for paused state and audit metadata.
   The existing pull-request trigger checks this state before queueing; manual
   review commands still pass idempotency, daily-cap, and stale-head checks.

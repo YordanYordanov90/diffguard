@@ -647,7 +647,10 @@ INDEX (installation_id, repository_id, pr_number)
 
 Automatic PR webhooks skip queueing while `paused` is true. Manual
 `@diffguard review` / `full review` still enqueue through the conversation
-worker and honor review daily-cap, idempotency, and stale-head checks.
+worker and honor review daily-cap, idempotency, and stale-head checks. The
+initial control migration creates the tenant-complete primary key; migration
+`0012_curious_ultron.sql` remains as a compatibility upgrade for installations
+that already applied the earlier `0011` form.
 
 ### ChatResponse (Zod — Feature 34)
 
