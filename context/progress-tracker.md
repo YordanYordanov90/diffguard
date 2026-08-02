@@ -10,6 +10,9 @@ Update this file after every meaningful implementation change.
   are implemented with acceptance verification still pending, Feature 23 is
   underway, and Features 25–26 and 28–34 (findings through PR-scoped AI chat)
   are implemented — the review-quality roadmap is complete pending dogfood.
+- Review-trust verification is specified as planned Features 35–37: targeted
+  security evidence, a fail-closed high/critical gate, and offline quality
+  evaluation. Implementation has not started.
 
 ## Current Goal
 
@@ -363,6 +366,11 @@ Update this file after every meaningful implementation change.
   response messages; and review-cap insertion uses an installation advisory
   lock. Migration `0012_curious_ultron.sql` remains the compatibility upgrade
   for databases that already applied the earlier `0011` migration.
+- Review-trust roadmap specification — completed 2026-08-02 (documentation
+  only): Features 35–37 define bounded targeted security evidence, a strict
+  high/critical verification and deduplication gate, and a sanitized offline
+  precision/regression program based on the 29 canonical dogfood suggestions.
+  No application code changed.
 
 ## In Progress
 
@@ -387,6 +395,10 @@ Update this file after every meaningful implementation change.
    - Features 33–34: GitHub App Issues permissions + `issue_comment`
      subscription, then dogfood pause/resume, manual review, and one PR chat
      answer on a scratch install before beta re-approval.
+3. Implement the review-trust roadmap in order:
+   - Feature 35: targeted security evidence retrieval;
+   - Feature 36: high-severity verification, downgrade, and deduplication gate;
+   - Feature 37: sanitized evaluation corpus, metrics, and release gates.
 
 ## Open Questions
 

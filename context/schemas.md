@@ -552,12 +552,57 @@ never persisted.
 
 ## Planned Review-Quality Contracts
 
-The remaining contracts below belong to Features 28–34 and are **not implemented yet**
-(Features 25–27 finding rows, fingerprints, inline review comments, and incremental
-review baselines are
-implemented above). They are the shape source of truth when each numbered feature
-begins. Move each contract into the implemented sections above, and update the
-matching Zod/Drizzle code in the same increment.
+### High-severity verification (Features 35–36 — planned)
+
+```ts
+SecurityVerificationDecision =
+  | "verified"
+  | "downgraded"
+  | "rejected"
+  | "manual_verification"
+
+SecurityVerification = {
+  candidateId:        string       // trusted allowlisted id only
+  decision:           SecurityVerificationDecision
+  finalSeverity:      Severity | null
+  evidenceComplete:   boolean
+  attackPreconditions: string | null
+  trustBoundary:       string | null
+  exploitPath:         string | null
+  impact:              string | null
+  defensesChecked:     string[]
+  missingEvidence:     string[]
+  reason:              string
+}
+
+SecurityVerificationOutput = {
+  decisions: SecurityVerification[]
+}
+```
+
+Every string and array receives explicit Zod bounds during Feature 36.
+`candidateId` must belong to the trusted set of Feature 24-confirmed
+high/critical candidates. A `verified` decision requires
+`evidenceComplete: true`, an empty `missingEvidence`, and a non-null severity
+that is not higher than the original candidate. `downgraded` permits only
+`medium`, `low`, or `info`. Rejected/manual decisions require
+`finalSeverity: null`. Invalid, missing, duplicate, or arbitrary ids verify
+nothing.
+
+Feature 36 plans aggregate-only columns on `reviews` for verification
+candidate, verified, downgraded, rejected, and manual counts plus model and
+duration. Verification input/output tokens are either included in the existing
+total review usage or stored as separate aggregate counters; that choice and
+the exact column names must be resolved here before the implementing Drizzle
+migration. Verifier reasoning, evidence paths, source, diffs, and prompts are
+never persisted.
+
+Feature 37's evaluation labels and reports are offline test artifacts, not
+database or public API contracts.
+
+The contracts below document implemented Features 29–34 and remain the shape
+source of truth for their current boundaries. Update matching Zod/Drizzle code
+and this file in the same increment whenever a contract changes.
 
 ### Implemented enums (Features 30–33)
 

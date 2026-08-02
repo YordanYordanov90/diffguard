@@ -204,6 +204,15 @@
   the automatic review daily cap. Feedback commands (`valid` / `dismiss` /
   `false-positive` / `remember`) are redirected to Features 30–31 inline
   replies rather than mutating state through the chat model.
+- Features 35–37 add a planned review-trust layer after Feature 24. Confirmed
+  high/critical candidates first receive bounded exact-head targeted evidence
+  for direct callees, security defenses, data constraints, migrations, tests,
+  and feature intent. A separate no-tool verifier may verify, downgrade,
+  reject, or mark the candidate for manual verification. Only verified severe
+  candidates may reach rendering or persistence; incomplete, malformed, or
+  timed-out verification fails closed. A sanitized offline evaluation corpus
+  measures precision and blocks regressions without persisting private source,
+  diffs, prompts, or rejected candidate text.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
@@ -226,6 +235,9 @@
     (`fallback_full`). Diffs are never persisted either way.
 5. Malformed or schema-invalid LLM output is never posted to a PR
    (one retry, then fail silently with status `failed`).
+5a. A high or critical candidate is never published from general adjudication
+    alone. It requires complete targeted evidence and a valid Feature 36
+    `verified` decision; uncertainty, timeout, or missing context fails closed.
 6. Webhook and worker payloads are Zod-validated at the boundary even
    after signature verification.
 7. Repo-provided instruction files are injected as delimited untrusted
