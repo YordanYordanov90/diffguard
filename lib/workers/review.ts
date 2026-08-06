@@ -6,9 +6,15 @@ import {
   FULL_FILE_CONTEXT_TIMEOUT_MS,
   FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
   FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
+  GENERAL_REVIEW_CONTEXT_MAX_FETCHES,
   LLM_TIMEOUT_MS,
   REVIEW_CONTEXT_MAX_FETCHES,
   REVIEW_PROMPT_TOKEN_BUDGET,
+  TARGETED_EVIDENCE_MAX_FETCHES,
+  TARGETED_EVIDENCE_MAX_FILES,
+  TARGETED_EVIDENCE_TIMEOUT_MS,
+  TARGETED_EVIDENCE_TOTAL_BYTE_LIMIT,
+  TARGETED_EVIDENCE_TOTAL_TOKEN_LIMIT,
 } from "@/lib/config/constants";
 import { parseEnv } from "@/lib/config/env";
 import type {
@@ -65,12 +71,14 @@ import {
   adjudicateReview,
   generateReview,
   ReviewFailedError,
+  verifySecurityFindings,
 } from "@/lib/review/generate";
 import { reviewJobSchema, type ReviewJob } from "@/lib/review/job";
 import { planRelatedCodeContext } from "@/lib/review/related-context";
 import {
   buildReviewPrompt,
   buildAdjudicationPrompt,
+  buildSecurityVerificationPrompt,
   estimateReviewPromptTokens,
   fitContextToPromptBudget,
 } from "@/lib/review/prompt";
@@ -79,7 +87,12 @@ import {
   emptyGatedReview,
   getRelevantDiffHunks,
   prepareCandidates,
+  type AllowlistedCandidate,
 } from "@/lib/review/evidence";
+import {
+  applySecurityVerification,
+  buildVerifiedReview,
+} from "@/lib/review/verification";
 import { toPersistableFindings } from "@/lib/review/fingerprint";
 import {
   selectEligibleFindings,
@@ -104,6 +117,7 @@ import {
   candidateReviewOutputSchema,
   reviewOutputSchema,
   adjudicationOutputSchema,
+  securityVerificationOutputSchema,
   type ConfirmedFinding,
   type FindingCandidate,
   type FindingUpdate,
@@ -111,7 +125,16 @@ import {
   type ReviewOutput,
 } from "@/lib/review/schema";
 import { selectLearningsForPrompt } from "@/lib/review/learnings";
-import { retrieveFullFileContext, retrieveRelatedCodeContext } from "./context";
+import {
+  retrieveFullFileContext,
+  retrieveRelatedCodeContext,
+  retrieveTargetedEvidenceContext,
+} from "./context";
+import {
+  assessTargetedSecurityEvidence,
+  candidateNeedsFeatureIntent,
+  planTargetedSecurityEvidence,
+} from "@/lib/review/targeted-evidence";
 
 type StoredReview = Awaited<ReturnType<typeof getReviewBySha>>;
 type CompletedBaseline = Awaited<ReturnType<typeof getLatestCompletedReviewForPr>>;
@@ -195,6 +218,7 @@ export type ReviewWorkerDependencies = {
   github: GitHubClient;
   generateReview: typeof generateReview;
   adjudicateReview?: typeof adjudicateReview;
+  verifySecurityFindings?: typeof verifySecurityFindings;
 };
 
 function envelope(success: boolean, data: unknown, error: string | null, status: number) {
@@ -307,6 +331,7 @@ function createDefaultDependencies(): ReviewWorkerDependencies {
     },
     generateReview,
     adjudicateReview,
+    verifySecurityFindings,
   };
 }
 
@@ -832,7 +857,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       changedFiles: processedDiff.files,
       fullFileContext: fullFileContext.files,
       repositoryPaths: repositoryTree.status === "fetched" ? repositoryTree.paths : [],
-      requestBudget: Math.max(0, REVIEW_CONTEXT_MAX_FETCHES - fullFileContext.requestCount),
+      requestBudget: Math.max(0, GENERAL_REVIEW_CONTEXT_MAX_FETCHES - fullFileContext.requestCount),
     });
     const relatedCodeContext = await retrieveRelatedCodeContext({
       installationId: job.installationId,
@@ -877,8 +902,31 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
     let confirmedFindings: ConfirmedFinding[] = [];
     let rejectedFindings = prepared.rejectedCount;
     let manualCheckCandidates = 0;
+    let confirmedCandidates: AllowlistedCandidate[] = [];
     let adjudicationModel: string | null = null;
     let adjudicationDurationMs: number | null = null;
+    let targetedEvidenceCandidates = 0;
+    let targetedEvidenceComplete = 0;
+    let targetedEvidenceIncomplete = 0;
+    let targetedEvidenceFetched = 0;
+    let targetedEvidenceRequests = 0;
+    let targetedEvidenceDurationMs: number | null = null;
+    let securityVerificationCandidates = 0;
+    let securityVerificationVerified = 0;
+    let securityVerificationDowngraded = 0;
+    let securityVerificationRejected = 0;
+    let securityVerificationManual = 0;
+    let securityVerificationModel: string | null = null;
+    let securityVerificationInputTokens: number | null = null;
+    let securityVerificationOutputTokens: number | null = null;
+    let securityVerificationDurationMs: number | null = null;
+    let targetedEvidencePlan: ReturnType<typeof planTargetedSecurityEvidence> | null = null;
+    let targetedEvidenceFiles: Array<{ file: string; reason: string; content: string }> = [];
+    let targetedEvidenceAssessment = {
+      completeCandidateIds: [] as string[],
+      incompleteCandidateIds: [] as string[],
+      missingByCandidate: {} as Record<string, import("@/lib/review/targeted-evidence").TargetedEvidenceCategory[]>,
+    };
     let totalUsage = generated.usage;
 
     if (prepared.candidates.length > 0) {
@@ -907,6 +955,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
           );
           gatedReview = decision.review;
           confirmedFindings = decision.confirmedFindings;
+          confirmedCandidates = decision.confirmedCandidates;
           rejectedFindings = decision.rejectedCount;
           manualCheckCandidates = decision.manualCount;
         } else {
@@ -922,6 +971,178 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         adjudicationDurationMs = Date.now() - adjudicationStartedAt;
       }
     }
+
+    const targetedFindings = confirmedCandidates.flatMap((candidate) => {
+      if (candidate.severity !== "high" && candidate.severity !== "critical") return [];
+      return [{
+        candidateId: candidate.candidateId,
+        file: candidate.file,
+        severity: candidate.severity,
+        category: candidate.category,
+        requiresFeatureIntent: candidateNeedsFeatureIntent(candidate),
+      }];
+    });
+    targetedEvidenceCandidates = targetedFindings.length;
+    if (targetedFindings.length > 0) {
+      const targetedEvidenceStartedAt = Date.now();
+      try {
+        const remainingEvidenceRequests = Math.max(
+          0,
+          REVIEW_CONTEXT_MAX_FETCHES -
+            fullFileContext.requestCount -
+            relatedCodeContext.requestCount,
+        );
+        targetedEvidencePlan = planTargetedSecurityEvidence({
+          findings: targetedFindings,
+          changedFiles: processedDiff.files,
+          fullFileContext: fullFileContext.files,
+          relatedCodeContext: relatedCodeContext.files,
+          repositoryPaths: repositoryTree.status === "fetched" ? repositoryTree.paths : [],
+          maxFiles: Math.min(TARGETED_EVIDENCE_MAX_FILES, remainingEvidenceRequests),
+          requestBudget: Math.min(TARGETED_EVIDENCE_MAX_FETCHES, remainingEvidenceRequests),
+        });
+        const targetedContext = await retrieveTargetedEvidenceContext({
+          installationId: job.installationId,
+          repoFullName: job.repoFullName,
+          headSha: job.headSha,
+          candidates: targetedEvidencePlan.candidates,
+          suppliedFiles: [...fullFileContext.files, ...relatedCodeContext.files].map(
+            (file) => file.file,
+          ),
+          fetchRepositoryFile: dependencies.github.fetchRepositoryFile,
+          totalByteBudget: Math.min(
+            TARGETED_EVIDENCE_TOTAL_BYTE_LIMIT,
+            Math.max(
+              0,
+              contextBudget.totalByteBudget -
+                fullFileContext.metadata.suppliedBytes -
+                relatedCodeContext.metadata.suppliedBytes,
+            ),
+          ),
+          totalTokenBudget: Math.min(
+            TARGETED_EVIDENCE_TOTAL_TOKEN_LIMIT,
+            Math.max(
+              0,
+              contextBudget.totalTokenBudget -
+                fullFileContext.metadata.suppliedTokens -
+                relatedCodeContext.metadata.suppliedTokens,
+            ),
+          ),
+          deadline: Math.min(
+            llmDeadline,
+            targetedEvidenceStartedAt + TARGETED_EVIDENCE_TIMEOUT_MS,
+          ),
+        });
+        const suppliedTargetedFiles = [...fullFileContext.files, ...relatedCodeContext.files]
+          .flatMap((file) => {
+            const candidate = targetedEvidencePlan?.candidates.find((item) => item.file === file.file);
+            return candidate ? [candidate] : [];
+          });
+        const assessment = assessTargetedSecurityEvidence(targetedEvidencePlan, [
+          ...suppliedTargetedFiles,
+          ...targetedContext.files,
+        ]);
+        targetedEvidenceAssessment = assessment;
+        targetedEvidenceFiles = targetedContext.files.map((file) => ({
+          file: file.file,
+          reason: file.reason,
+          content: file.content,
+        }));
+        targetedEvidenceComplete = assessment.completeCandidateIds.length;
+        targetedEvidenceIncomplete = assessment.incompleteCandidateIds.length;
+        targetedEvidenceFetched = targetedContext.metadata.fetchedCount;
+        targetedEvidenceRequests = targetedContext.requestCount;
+      } catch {
+        targetedEvidenceIncomplete = targetedEvidenceCandidates;
+        targetedEvidenceAssessment = {
+          completeCandidateIds: [],
+          incompleteCandidateIds: targetedFindings.map((finding) => finding.candidateId),
+          missingByCandidate: Object.fromEntries(
+            targetedFindings.map((finding) => [finding.candidateId, ["security_defense"]]),
+          ),
+        };
+      } finally {
+        targetedEvidenceDurationMs = Date.now() - targetedEvidenceStartedAt;
+      }
+    }
+
+    const nonSevereCandidates = confirmedCandidates.filter(
+      (candidate) => candidate.severity !== "high" && candidate.severity !== "critical",
+    );
+    let finalConfirmedCandidates: AllowlistedCandidate[] = nonSevereCandidates;
+    if (targetedFindings.length > 0) {
+      securityVerificationCandidates = targetedFindings.length;
+      securityVerificationModel = model;
+      const verificationStartedAt = Date.now();
+      try {
+        if (!dependencies.verifySecurityFindings || !targetedEvidencePlan) {
+          securityVerificationRejected = targetedFindings.length;
+        } else {
+          const verification = await dependencies.verifySecurityFindings(
+            buildSecurityVerificationPrompt({
+              candidates: confirmedCandidates.filter(
+                (candidate) => candidate.severity === "high" || candidate.severity === "critical",
+              ),
+              diffHunks: getRelevantDiffHunks(
+                confirmedCandidates.filter(
+                  (candidate) => candidate.severity === "high" || candidate.severity === "critical",
+                ),
+                processedDiff.files,
+              ),
+              evidenceFiles: [
+                ...fullFileContext.files.map((file) => ({
+                  file: file.file,
+                  reason: "changed-file context",
+                  content: file.content,
+                })),
+                ...relatedCodeContext.files.map((file) => ({
+                  file: file.file,
+                  reason: file.reason,
+                  content: file.content,
+                })),
+                ...targetedEvidenceFiles,
+              ].filter((file, index, files) => files.findIndex((item) => item.file === file.file) === index),
+              requirements: targetedEvidencePlan.requirements,
+              assessment: targetedEvidenceAssessment,
+            }),
+            { model },
+            { deadline: llmDeadline },
+          );
+          const decision = applySecurityVerification(
+            confirmedCandidates.filter(
+              (candidate) => candidate.severity === "high" || candidate.severity === "critical",
+            ),
+            securityVerificationOutputSchema.safeParse(verification.output).success
+              ? verification.output
+              : null,
+            targetedEvidenceAssessment,
+          );
+          finalConfirmedCandidates = [...nonSevereCandidates, ...decision.candidates];
+          securityVerificationVerified = decision.verifiedCount;
+          securityVerificationDowngraded = decision.downgradedCount;
+          securityVerificationRejected = decision.rejectedCount;
+          securityVerificationManual = decision.manualCount;
+          totalUsage = addUsage(totalUsage, verification.usage);
+          securityVerificationInputTokens = verification.usage.inputTokens;
+          securityVerificationOutputTokens = verification.usage.outputTokens;
+        }
+      } catch (error) {
+        if (!(error instanceof ReviewFailedError) || (!error.timedOut && error.retryable)) {
+          throw error;
+        }
+        securityVerificationManual = targetedFindings.length;
+      } finally {
+        securityVerificationDurationMs = Date.now() - verificationStartedAt;
+      }
+    }
+    confirmedCandidates = finalConfirmedCandidates;
+    confirmedFindings = finalConfirmedCandidates.map((candidate) => ({
+      ...candidate,
+      requiresRuntimeVerification: false as const,
+    }));
+    gatedReview = buildVerifiedReview(finalConfirmedCandidates);
+    rejectedFindings += securityVerificationRejected;
+    manualCheckCandidates += securityVerificationManual;
 
     const persistableFindings = toPersistableFindings(
       confirmedFindings,
@@ -1111,6 +1332,21 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       manualCheckCandidates,
       adjudicationModel,
       adjudicationDurationMs,
+      targetedEvidenceCandidates,
+      targetedEvidenceComplete,
+      targetedEvidenceIncomplete,
+      targetedEvidenceFetched,
+      targetedEvidenceRequests,
+      targetedEvidenceDurationMs,
+      securityVerificationCandidates,
+      securityVerificationVerified,
+      securityVerificationDowngraded,
+      securityVerificationRejected,
+      securityVerificationManual,
+      securityVerificationModel,
+      securityVerificationInputTokens,
+      securityVerificationOutputTokens,
+      securityVerificationDurationMs,
       linkedIssueAssessments: persistedLinkedIssues,
       skippedFiles: processedDiff.skippedFiles,
       model,

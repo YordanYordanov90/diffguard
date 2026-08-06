@@ -10,6 +10,7 @@ import {
 import {
   retrieveFullFileContext,
   retrieveRelatedCodeContext,
+  retrieveTargetedEvidenceContext,
 } from "@/lib/workers/context";
 
 const hunk = (path: string) => ({
@@ -157,6 +158,50 @@ describe("full-file context", () => {
       },
     ]);
     expect(result.metadata.suppliedBytes).toBe(26);
+  });
+
+  it("retrieves targeted evidence at the exact head and skips supplied files", async () => {
+    const fetchRepositoryFile = vi.fn().mockResolvedValue({
+      status: "fetched",
+      content: "export const check = true;",
+      byteLength: 27,
+    });
+    const result = await retrieveTargetedEvidenceContext({
+      installationId: 42,
+      repoFullName: "owner/repo",
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      candidates: [
+        {
+          file: "src/auth.ts",
+          reasons: ["candidate_source"],
+          candidateIds: ["candidate-1"],
+        },
+        {
+          file: "src/security/check.ts",
+          reasons: ["security_defense"],
+          candidateIds: ["candidate-1"],
+        },
+      ],
+      suppliedFiles: ["src/auth.ts"],
+      fetchRepositoryFile,
+    });
+
+    expect(result.files).toEqual([{
+      file: "src/security/check.ts",
+      content: "export const check = true;",
+      reason: "security_defense",
+      candidateIds: ["candidate-1"],
+      reasons: ["security_defense"],
+    }]);
+    expect(fetchRepositoryFile).toHaveBeenCalledOnce();
+    expect(fetchRepositoryFile).toHaveBeenCalledWith(
+      42,
+      "owner/repo",
+      "src/security/check.ts",
+      "0123456789abcdef0123456789abcdef01234567",
+      expect.any(Number),
+      expect.any(AbortSignal),
+    );
   });
 
   it("creates zeroed safe metadata", () => {

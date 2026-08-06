@@ -138,8 +138,13 @@ describe("review trigger", () => {
   });
 
   it("marks events over the daily cap as skipped", async () => {
-    const dependencies = createDependencies();
-    dependencies.queries.countReviewsToday = vi.fn().mockResolvedValue(20);
+    const dependencies = createDependencies({
+      createQueuedReview: vi.fn().mockResolvedValue({
+        created: true,
+        review: { id: "review-1", status: "skipped" },
+        reason: "daily_cap",
+      }),
+    });
     const handler = createReviewTriggerHandler(dependencies);
 
     await expect(handler(baseEvent, "delivery-1")).resolves.toEqual({
@@ -218,14 +223,12 @@ describe("review trigger", () => {
   });
 
   it("allows the review at the daily-cap boundary", async () => {
-    const dependencies = createDependencies({
-      countReviewsToday: vi.fn().mockResolvedValue(19),
-    });
+    const dependencies = createDependencies();
     const handler = createReviewTriggerHandler(dependencies);
 
     await expect(handler(baseEvent, "delivery-1")).resolves.toEqual({ status: "queued" });
-    expect(dependencies.queries.countReviewsToday).toHaveBeenCalledBefore(
-      dependencies.queries.createQueuedReview,
+    expect(dependencies.queries.createQueuedReview).toHaveBeenCalledWith(
+      expect.objectContaining({ enforceDailyCap: true }),
     );
   });
 

@@ -33,8 +33,6 @@ export function parseConversationCommand(body: string): ConversationCommand {
   const rest = trimmed.replace(prefix, "").trim();
   if (!rest) return { kind: "empty" };
 
-  const lower = rest.toLowerCase();
-
   // Exact control commands (optional trailing punctuation only).
   if (/^review\s*$/i.test(rest) || /^review[.!?]?\s*$/i.test(rest)) {
     return { kind: "control", action: "review" };

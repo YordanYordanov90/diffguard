@@ -149,11 +149,11 @@ function createDependencies(
 describe("actor permissions", () => {
   it("allows read-only chat while restricting manual reviews", () => {
     expect(actorMayStartConversation("read", "reader", "author")).toBe(true);
-    expect(actorMayRunControl("review", "read", "reader", "author")).toBe(false);
-    expect(actorMayRunControl("review", "none", "author", "author")).toBe(true);
-    expect(actorMayRunControl("review", "write", "reviewer", "author")).toBe(true);
-    expect(actorMayRunControl("pause", "read", "reader", "author")).toBe(false);
-    expect(actorMayRunControl("full_review", "write", "dev", "author")).toBe(true);
+    expect(actorMayRunControl("review", "read")).toBe(false);
+    expect(actorMayRunControl("review", "none")).toBe(false);
+    expect(actorMayRunControl("review", "write")).toBe(true);
+    expect(actorMayRunControl("pause", "read")).toBe(false);
+    expect(actorMayRunControl("full_review", "write")).toBe(true);
   });
 });
 
@@ -294,6 +294,43 @@ describe("conversation worker", () => {
       data: { status: "skipped", reason: "unauthorized" },
     });
     expect(dependencies.reviewPublisher.publishJSON).not.toHaveBeenCalled();
+  });
+
+  it("does not queue a manual review when the atomic cap reservation is full", async () => {
+    const dependencies = createDependencies({ commentBody: "@diffguard review" });
+    dependencies.queries.createQueuedReview.mockResolvedValue({
+      created: true,
+      review: { id: "review-1", status: "skipped" },
+      reason: "daily_cap",
+    });
+
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { status: "completed", enqueue: "daily_cap" },
+    });
+    expect(dependencies.reviewPublisher.publishJSON).not.toHaveBeenCalled();
+  });
+
+  it("republishes a manual review after a prior daily-cap skip is requeued", async () => {
+    const dependencies = createDependencies({ commentBody: "@diffguard review" });
+    dependencies.queries.createQueuedReview.mockResolvedValue({
+      created: false,
+      review: { id: "review-1", status: "queued" },
+    });
+
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { status: "completed", enqueue: "queued" },
+    });
+    expect(dependencies.reviewPublisher.publishJSON).toHaveBeenCalled();
   });
 
   it("skips deleted comments and inaccessible PRs", async () => {

@@ -23,6 +23,7 @@ export type EvidenceDecision = {
   };
   /** Confirmed candidates with evidence fields for Feature 25 persistence. */
   confirmedFindings: ConfirmedFinding[];
+  confirmedCandidates: AllowlistedCandidate[];
   rejectedCount: number;
   manualCount: number;
 };
@@ -159,6 +160,7 @@ export function applyAdjudication(
   }
 
   const confirmedFindings: ConfirmedFinding[] = [];
+  const confirmedCandidates: AllowlistedCandidate[] = [];
   let rejectedCount = initiallyRejectedCount;
   let manualCount = 0;
   for (const candidate of candidates) {
@@ -168,6 +170,7 @@ export function applyAdjudication(
     } else if (decision.decision === "manual_verification") {
       manualCount += 1;
     } else {
+      confirmedCandidates.push(candidate);
       confirmedFindings.push(toConfirmedFinding(candidate));
     }
   }
@@ -183,6 +186,7 @@ export function applyAdjudication(
   return {
     review,
     confirmedFindings,
+    confirmedCandidates,
     rejectedCount,
     manualCount,
   };
@@ -200,6 +204,7 @@ export function emptyEvidenceDecision(): EvidenceDecision {
   return {
     review: emptyGatedReview(),
     confirmedFindings: [],
+    confirmedCandidates: [],
     rejectedCount: 0,
     manualCount: 0,
   };

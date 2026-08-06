@@ -12,6 +12,7 @@ import {
   CHAT_OUTPUT_TOKEN_BUDGET,
   LLM_TIMEOUT_MS,
   REVIEW_OUTPUT_TOKEN_BUDGET,
+  SECURITY_VERIFICATION_OUTPUT_TOKEN_BUDGET,
 } from "@/lib/config/constants";
 import type { Env } from "@/lib/config/env";
 import { getModel, type InstallationModelConfig } from "@/lib/config/model";
@@ -21,9 +22,11 @@ import {
   adjudicationOutputSchema,
   candidateReviewOutputSchema,
   chatResponseSchema,
+  securityVerificationOutputSchema,
   type AdjudicationOutput,
   type CandidateReviewOutput,
   type ChatResponse,
+  type SecurityVerificationOutput,
 } from "./schema";
 
 type Usage = {
@@ -62,6 +65,12 @@ export type GeneratedReview = {
 
 export type GeneratedAdjudication = {
   output: AdjudicationOutput;
+  usage: Usage;
+  durationMs: number;
+};
+
+export type GeneratedSecurityVerification = {
+  output: SecurityVerificationOutput;
   usage: Usage;
   durationMs: number;
 };
@@ -230,6 +239,20 @@ export async function adjudicateReview(
     adjudicationOutputSchema,
     options,
     ADJUDICATION_OUTPUT_TOKEN_BUDGET,
+  );
+}
+
+export async function verifySecurityFindings(
+  prompt: ReviewPrompt,
+  installation: InstallationModelConfig,
+  options: StructuredGenerationOptions = {},
+): Promise<GeneratedSecurityVerification> {
+  return generateStructured(
+    prompt,
+    installation,
+    securityVerificationOutputSchema,
+    options,
+    SECURITY_VERIFICATION_OUTPUT_TOKEN_BUDGET,
   );
 }
 

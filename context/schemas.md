@@ -74,6 +74,21 @@ rejected_findings        integer NOT NULL DEFAULT 0
 manual_check_candidates  integer NOT NULL DEFAULT 0
 adjudication_model       text NULL
 adjudication_duration_ms integer NULL
+targeted_evidence_candidates integer NOT NULL DEFAULT 0
+targeted_evidence_complete integer NOT NULL DEFAULT 0
+targeted_evidence_incomplete integer NOT NULL DEFAULT 0
+targeted_evidence_fetched integer NOT NULL DEFAULT 0
+targeted_evidence_requests integer NOT NULL DEFAULT 0
+targeted_evidence_duration_ms integer NULL
+security_verification_candidates integer NOT NULL DEFAULT 0
+security_verification_verified integer NOT NULL DEFAULT 0
+security_verification_downgraded integer NOT NULL DEFAULT 0
+security_verification_rejected integer NOT NULL DEFAULT 0
+security_verification_manual integer NOT NULL DEFAULT 0
+security_verification_model text NULL
+security_verification_input_tokens integer NULL
+security_verification_output_tokens integer NULL
+security_verification_duration_ms integer NULL
 linked_issue_assessments jsonb NOT NULL DEFAULT '[]'  // Feature 29; never issue body
 skipped_files    text[] NOT NULL DEFAULT '{}'  // over-budget disclosure
 model            text NULL
@@ -552,12 +567,91 @@ never persisted.
 
 ## Planned Review-Quality Contracts
 
-The remaining contracts below belong to Features 28–34 and are **not implemented yet**
-(Features 25–27 finding rows, fingerprints, inline review comments, and incremental
-review baselines are
-implemented above). They are the shape source of truth when each numbered feature
-begins. Move each contract into the implemented sections above, and update the
-matching Zod/Drizzle code in the same increment.
+### High-severity verification (Features 35–36 — planned)
+
+```ts
+SecurityVerificationDecision =
+  | "verified"
+  | "downgraded"
+  | "rejected"
+  | "manual_verification"
+
+SecurityVerification = {
+  candidateId:        string       // trusted allowlisted id only
+  decision:           SecurityVerificationDecision
+  finalSeverity:      Severity | null
+  evidenceComplete:   boolean
+  attackPreconditions: string | null
+  trustBoundary:       string | null
+  exploitPath:         string | null
+  impact:              string | null
+  defensesChecked:     string[]
+  missingEvidence:     string[]
+  reason:              string
+  duplicateOfCandidateId: string | null // trusted allowlisted id only
+}
+
+SecurityVerificationOutput = {
+  decisions: SecurityVerification[]
+}
+```
+
+Every string and array receives explicit Zod bounds during Feature 36.
+`candidateId` must belong to the trusted set of Feature 24-confirmed
+high/critical candidates. A `verified` decision requires
+`evidenceComplete: true`, an empty `missingEvidence`, and a non-null severity
+that is not higher than the original candidate. `downgraded` permits only
+`medium`, `low`, or `info`. Rejected/manual decisions require
+`finalSeverity: null`. Invalid, missing, duplicate, or arbitrary ids verify
+nothing.
+
+Feature 35 persists only aggregate targeted-evidence telemetry on `reviews`:
+`targeted_evidence_candidates`, `targeted_evidence_complete`,
+`targeted_evidence_incomplete`, `targeted_evidence_fetched`,
+`targeted_evidence_requests`, and `targeted_evidence_duration_ms`. Feature 36
+adds aggregate `security_verification_*` counters, model, token, and duration
+columns. Evidence plans, completeness details, paths, source, diffs, prompts,
+and verifier reasoning remain runtime-only and non-persistent.
+
+Feature 37's evaluation labels and reports are offline test artifacts, not
+database or public API contracts.
+
+### Review-quality evaluation artifacts (Feature 37)
+
+```ts
+EvaluationLabel =
+  | "actionable_defect" | "optional_hardening" | "intentional_behavior"
+  | "false_positive" | "policy_question" | "duplicate"
+  | "severity_overstated"
+
+EvaluationManifest = {
+  version: string
+  fixtures: SanitizedEvaluationFixture[] // canonical v1 contains 29
+}
+
+EvaluationReport = {
+  version: string
+  fixtureCount: number
+  actionablePrecision: RateMetric
+  highCriticalPrecision: RateMetric
+  falsePositiveRate: RateMetric
+  optionalHardeningRate: RateMetric
+  severityOverstatementRate: RateMetric
+  duplicateRootCauseRate: RateMetric
+  incompleteEvidencePublicationAttempts: number
+  malformedPublicationAttempts: number
+  stages: StageAggregate[]
+}
+```
+
+Manifest source is synthetic or owner-controlled public fixture data only.
+Recorded results contain structured outputs, fixture ids, model ids, tokens,
+durations, and aggregate decisions; they never contain source, diffs, prompts,
+issue bodies, or comment text.
+
+The contracts below document implemented Features 29–34 and remain the shape
+source of truth for their current boundaries. Update matching Zod/Drizzle code
+and this file in the same increment whenever a contract changes.
 
 ### Implemented enums (Features 30–33)
 
@@ -647,7 +741,10 @@ INDEX (installation_id, repository_id, pr_number)
 
 Automatic PR webhooks skip queueing while `paused` is true. Manual
 `@diffguard review` / `full review` still enqueue through the conversation
-worker and honor review daily-cap, idempotency, and stale-head checks.
+worker and honor review daily-cap, idempotency, and stale-head checks. The
+initial control migration creates the tenant-complete primary key; migration
+`0012_curious_ultron.sql` remains as a compatibility upgrade for installations
+that already applied the earlier `0011` form.
 
 ### ChatResponse (Zod — Feature 34)
 

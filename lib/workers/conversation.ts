@@ -5,7 +5,6 @@ import { Receiver } from "@upstash/qstash";
 
 import {
   CHAT_DIFF_CHAR_LIMIT,
-  DAILY_REVIEW_CAP,
   DEBOUNCE_SECONDS,
   LLM_TIMEOUT_MS,
 } from "@/lib/config/constants";
@@ -22,7 +21,6 @@ import {
   markInteractionFailed,
   markInteractionSkipped,
   setPrReviewPaused,
-  countReviewsToday,
 } from "@/lib/db/queries";
 import {
   createIssueComment,
@@ -80,7 +78,6 @@ type ConversationQueries = {
   setPrReviewPaused: typeof setPrReviewPaused;
   isPrReviewPaused: typeof isPrReviewPaused;
   createQueuedReview: typeof createQueuedReview;
-  countReviewsToday: typeof countReviewsToday;
   getInstallationModel: typeof getInstallationModel;
   listOpenFindingsByPr: typeof listOpenFindingsByPr;
   getLatestCompletedReviewForPr: typeof getLatestCompletedReviewForPr;
@@ -140,7 +137,6 @@ function createDefaultDependencies(): ConversationWorkerDependencies {
       setPrReviewPaused,
       isPrReviewPaused,
       createQueuedReview,
-      countReviewsToday,
       getInstallationModel,
       listOpenFindingsByPr,
       getLatestCompletedReviewForPr,
@@ -190,18 +186,12 @@ export function actorMayStartConversation(
 export function actorMayRunControl(
   action: ReviewControlAction,
   permission: RepositoryPermission,
-  actorLogin: string,
-  prAuthorLogin: string,
 ): boolean {
   if (controlRequiresWriteAccess(action)) {
     return WRITE_PERMISSIONS.has(permission);
   }
   // Manual reviews consume the installation's review budget.
-  const isPrAuthor =
-    actorLogin.localeCompare(prAuthorLogin, undefined, {
-      sensitivity: "accent",
-    }) === 0;
-  return isPrAuthor || WRITE_PERMISSIONS.has(permission);
+  return WRITE_PERMISSIONS.has(permission);
 }
 
 export function getConversationReplyMarker(job: ConversationJob) {
@@ -256,19 +246,14 @@ async function enqueueManualReview(
   forceFullReview: boolean,
   dependencies: ConversationWorkerDependencies,
 ): Promise<{ status: "queued" | "duplicate" | "daily_cap" | "failed" }> {
-  const reviewsToday = await dependencies.queries.countReviewsToday(
-    job.installationId,
-  );
-  if (reviewsToday >= DAILY_REVIEW_CAP) {
-    return { status: "daily_cap" };
-  }
-
   const queued = await dependencies.queries.createQueuedReview({
     installationId: job.installationId,
     repositoryId: job.repositoryId,
     prNumber: job.prNumber,
     headSha: pr.headSha,
+    enforceDailyCap: true,
   });
+  if (queued.reason === "daily_cap") return { status: "daily_cap" };
   if (!queued.review) return { status: "failed" };
 
   if (!queued.created && queued.review.status !== "queued") {
@@ -682,8 +667,6 @@ async function processConversationJob(
       !actorMayRunControl(
         command.action,
         permission,
-        sourceComment.userLogin,
-        prAccess.authorLogin,
       )
     ) {
       await postReplyOnce(

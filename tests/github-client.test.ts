@@ -9,13 +9,16 @@ import {
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
 
-function requestErrorOptions(headers: Record<string, string> = {}) {
+function requestErrorOptions(
+  headers: Record<string, string> = {},
+  message?: string,
+) {
   return {
     response: {
       status: 403,
       headers,
       url: "https://api.github.com",
-      data: {},
+      data: message ? { message } : {},
     },
     request: { method: "POST" as const, url: "https://api.github.com", headers: {} },
   };
@@ -27,6 +30,24 @@ describe("GitHub comment error classification", () => {
     expect(
       isNonRetryableIssueCommentError(
         new RequestError("Forbidden", 403, requestErrorOptions()),
+      ),
+    ).toBe(true);
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError(
+          "Secondary rate limit",
+          403,
+          requestErrorOptions({}, "You have exceeded a secondary rate limit"),
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isNonRetryableIssueCommentError(
+        new RequestError(
+          "Integration permission",
+          403,
+          requestErrorOptions({}, "Resource not accessible by integration"),
+        ),
       ),
     ).toBe(true);
     expect(

@@ -5,7 +5,7 @@ CREATE TABLE "pr_review_controls" (
 	"paused" boolean DEFAULT false NOT NULL,
 	"updated_by" text NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "pr_review_controls_pk" PRIMARY KEY("repository_id","pr_number")
+	CONSTRAINT "pr_review_controls_pk" PRIMARY KEY("installation_id","repository_id","pr_number")
 );
 --> statement-breakpoint
 ALTER TABLE "pr_review_controls" ADD CONSTRAINT "pr_review_controls_installation_id_installations_id_fk" FOREIGN KEY ("installation_id") REFERENCES "public"."installations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

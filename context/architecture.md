@@ -195,9 +195,8 @@
 - Feature 34 extends the conversation worker with deterministic review
   controls (`review`, `full review`, `pause`, `resume`) parsed before any LLM
   call, and free-form PR chat via structured `ChatResponse`. Write/maintain/
-  admin is required for manual review, pause, and resume commands; the PR
-  author may request them regardless of collaborator permission, while
-  read-only collaborators may ask questions. `pr_review_controls`
+  admin is required for manual review, pause, and resume commands; read-only
+  collaborators may ask questions. `pr_review_controls`
   holds per-PR pause state checked by the automatic review trigger. Chat
   prompts delimit untrusted question, PR text, findings, thread, and diff
   sections; file/line references are allowlisted against the reviewed paths.
@@ -205,6 +204,21 @@
   the automatic review daily cap. Feedback commands (`valid` / `dismiss` /
   `false-positive` / `remember`) are redirected to Features 30–31 inline
   replies rather than mutating state through the chat model.
+- Features 35–36 add the first review-trust layer after Feature 24. Confirmed
+  high/critical candidates first receive bounded exact-head targeted evidence
+  for direct callees, security defenses, data constraints, migrations, tests,
+  and feature intent. A separate no-tool verifier may verify, downgrade,
+  reject, or mark the candidate for manual verification. Only verified severe
+  candidates may reach rendering or persistence; incomplete, malformed, or
+  timed-out verification fails closed. Duplicate roots are merged at the
+  strongest verified severity. A sanitized offline evaluation corpus measures
+  precision and blocks regressions without persisting private source, diffs,
+  prompts, or rejected candidate text.
+- Feature 37 maintains a versioned sanitized offline manifest and recorded
+  stage outputs for candidate generation, adjudication, targeted evidence, and
+  verification. Deterministic metrics and release gates run without GitHub,
+  database, or publication side effects; live evaluation requires an explicit
+  developer adapter and never changes production state.
 - Both public endpoints (webhook, worker) require signature verification
   before any parsing or DB access.
 
@@ -227,6 +241,9 @@
     (`fallback_full`). Diffs are never persisted either way.
 5. Malformed or schema-invalid LLM output is never posted to a PR
    (one retry, then fail silently with status `failed`).
+5a. A high or critical candidate is never published from general adjudication
+    alone. It requires complete targeted evidence and a valid Feature 36
+    `verified` decision; uncertainty, timeout, or missing context fails closed.
 6. Webhook and worker payloads are Zod-validated at the boundary even
    after signature verification.
 7. Repo-provided instruction files are injected as delimited untrusted

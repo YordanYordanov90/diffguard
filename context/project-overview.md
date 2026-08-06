@@ -82,7 +82,7 @@ with a multi-tenant foundation that can scale later.
 The implementation ledger splits this work into Features 22–32 so each
 security boundary, migration, and pipeline change can be verified separately.
 
-### PR Conversation (final quality feature)
+### PR Conversation
 
 - A permission-gated, rate-limited GitHub comment boundary
 - PR-scoped questions and deterministic review controls such as review,
@@ -90,9 +90,21 @@ security boundary, migration, and pipeline change can be verified separately.
 - Explanatory only: no branch writes, commits, tool execution, or persistent
   conversation memory
 
-This remains last in the roadmap (Features 33–34). Review accuracy,
+Features 33–34 remain subordinate to automatic review quality. Review accuracy,
 context, inline usefulness, incremental behavior, and learnings must be
-dogfooded first.
+dogfooded before conversation becomes a primary surface.
+
+### Review Trust Verification (local implementation)
+
+- Finding-specific retrieval of authorization helpers, database constraints,
+  migrations, tests, and explicit feature intent for severe candidates
+- A fail-closed third verification stage: high/critical findings publish only
+  after complete evidence and independent structured confirmation
+- A sanitized offline evaluation corpus and release gates for precision,
+  severity calibration, duplicate suppression, cost, and latency
+
+The implementation ledger splits this work into Features 35–37. It extends,
+rather than replaces, Feature 24's general false-positive gate.
 
 ### Later (Phase 3 — out of MVP)
 

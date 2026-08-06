@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } 
 
 import {
   DAILY_CONVERSATION_CAP,
+  DAILY_REVIEW_CAP,
   LEARNING_GUIDANCE_MAX_CHARS,
   MAX_ACTIVE_LEARNINGS_PER_REPO,
 } from "@/lib/config/constants";
@@ -50,6 +51,8 @@ export type QueuedReviewInput = {
   repositoryId: number;
   prNumber: number;
   headSha: string;
+  /** Reserve the installation review-cap slot atomically before inserting. */
+  enforceDailyCap?: boolean;
 };
 
 export type ReviewTarget = {
@@ -61,6 +64,7 @@ export type ReviewTarget = {
 export type QueuedReviewResult = {
   review: typeof reviews.$inferSelect | null;
   created: boolean;
+  reason?: "daily_cap";
 };
 
 export type ReviewCompletion = {
@@ -79,6 +83,21 @@ export type ReviewCompletion = {
   manualCheckCandidates: number;
   adjudicationModel: string | null;
   adjudicationDurationMs: number | null;
+  targetedEvidenceCandidates: number;
+  targetedEvidenceComplete: number;
+  targetedEvidenceIncomplete: number;
+  targetedEvidenceFetched: number;
+  targetedEvidenceRequests: number;
+  targetedEvidenceDurationMs: number | null;
+  securityVerificationCandidates: number;
+  securityVerificationVerified: number;
+  securityVerificationDowngraded: number;
+  securityVerificationRejected: number;
+  securityVerificationManual: number;
+  securityVerificationModel: string | null;
+  securityVerificationInputTokens: number | null;
+  securityVerificationOutputTokens: number | null;
+  securityVerificationDurationMs: number | null;
   linkedIssueAssessments: StoredIssueAssessment[];
   skippedFiles: string[];
   model: string;
@@ -181,6 +200,10 @@ export async function createQueuedReview(
   input: QueuedReviewInput,
   database: Database = defaultDb,
 ) {
+  if (input.enforceDailyCap) {
+    return createQueuedReviewWithinDailyCap(input, database);
+  }
+
   const [repository] = await database
     .select({ id: repositories.id })
     .from(repositories)
@@ -221,6 +244,159 @@ export async function createQueuedReview(
     database,
   );
   return { review: existingReview, created: false };
+}
+
+async function createQueuedReviewWithinDailyCap(
+  input: QueuedReviewInput,
+  database: Database,
+): Promise<QueuedReviewResult> {
+  type QueueDecision = {
+    id: string | null;
+    created: boolean;
+    reason: string | null;
+  };
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const startOfNextDay = new Date(startOfDay);
+  startOfNextDay.setUTCDate(startOfNextDay.getUTCDate() + 1);
+  const decisionResult = await database.execute<QueueDecision>(sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(43::int, ${input.installationId}::int)
+    ),
+    existing AS (
+      SELECT review.id
+      FROM reviews AS review, locked
+      WHERE review.installation_id = ${input.installationId}
+        AND review.repository_id = ${input.repositoryId}
+        AND review.pr_number = ${input.prNumber}
+        AND review.head_sha = ${input.headSha}
+        AND (
+          review.status <> 'skipped'
+          OR review.skip_reason IS NULL
+          OR review.skip_reason <> 'daily_cap'
+        )
+      LIMIT 1
+    ),
+    daily_cap_existing AS (
+      SELECT review.id
+      FROM reviews AS review, locked
+      WHERE review.installation_id = ${input.installationId}
+        AND review.repository_id = ${input.repositoryId}
+        AND review.pr_number = ${input.prNumber}
+        AND review.head_sha = ${input.headSha}
+        AND review.status = 'skipped'
+        AND review.skip_reason = 'daily_cap'
+      LIMIT 1
+    ),
+    capacity AS (
+      SELECT count(*) < ${DAILY_REVIEW_CAP} AS available
+      FROM reviews AS review, locked
+      WHERE review.installation_id = ${input.installationId}
+        AND review.created_at >= ${startOfDay}
+        AND review.created_at < ${startOfNextDay}
+        AND review.status <> 'skipped'
+    ),
+    eligible AS (
+      SELECT 1
+      FROM repositories AS repository, capacity
+      WHERE repository.id = ${input.repositoryId}
+        AND repository.installation_id = ${input.installationId}
+        AND capacity.available
+        AND NOT EXISTS (SELECT 1 FROM existing)
+        AND NOT EXISTS (SELECT 1 FROM daily_cap_existing)
+    ),
+    requeued AS (
+      UPDATE reviews AS review
+      SET
+        status = 'queued',
+        skip_reason = NULL,
+        error = NULL,
+        created_at = now(),
+        updated_at = now()
+      FROM capacity
+      WHERE review.id IN (SELECT id FROM daily_cap_existing)
+        AND capacity.available
+      RETURNING review.id
+    ),
+    inserted AS (
+      INSERT INTO reviews (
+        installation_id,
+        repository_id,
+        pr_number,
+        head_sha
+      )
+      SELECT
+        ${input.installationId},
+        ${input.repositoryId},
+        ${input.prNumber},
+        ${input.headSha}
+      FROM eligible
+      ON CONFLICT (repository_id, pr_number, head_sha) DO NOTHING
+      RETURNING id
+    ),
+    capped AS (
+      INSERT INTO reviews (
+        installation_id,
+        repository_id,
+        pr_number,
+        head_sha,
+        status,
+        skip_reason
+      )
+      SELECT
+        ${input.installationId},
+        ${input.repositoryId},
+        ${input.prNumber},
+        ${input.headSha},
+        'skipped',
+        'daily_cap'
+      FROM repositories AS repository, capacity
+      WHERE repository.id = ${input.repositoryId}
+        AND repository.installation_id = ${input.installationId}
+        AND NOT capacity.available
+        AND NOT EXISTS (SELECT 1 FROM existing)
+        AND NOT EXISTS (SELECT 1 FROM daily_cap_existing)
+      ON CONFLICT (repository_id, pr_number, head_sha) DO NOTHING
+      RETURNING id
+    )
+    SELECT requeued.id, true AS created, NULL::text AS reason
+    FROM requeued
+    UNION ALL
+    SELECT inserted.id, true AS created, NULL::text AS reason
+    FROM inserted
+    UNION ALL
+    SELECT existing.id, false AS created, NULL::text AS reason
+    FROM existing
+    UNION ALL
+    SELECT daily_cap_existing.id, false AS created, 'daily_cap'::text AS reason
+    FROM daily_cap_existing, capacity
+    WHERE NOT capacity.available
+    UNION ALL
+    SELECT capped.id, true AS created, 'daily_cap'::text AS reason
+    FROM capped
+    LIMIT 1
+  `);
+
+  const decision = decisionResult.rows[0];
+  if (!decision?.id) return { review: null, created: false };
+
+  const [review] = await database
+    .select()
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.id, decision.id),
+        eq(reviews.installationId, input.installationId),
+      ),
+    )
+    .limit(1);
+
+  return {
+    review: review ?? null,
+    created: decision.created,
+    ...(decision.reason === "daily_cap" ? { reason: "daily_cap" as const } : {}),
+  };
 }
 
 export async function getReviewTarget(
