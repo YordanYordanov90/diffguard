@@ -127,10 +127,11 @@ from user feedback.
 
 ## Implementation checklist
 
-- [ ] Add the bounded `SecurityVerificationOutput` Zod contract.
-- [ ] Add trusted validation, severity-transition, and deduplication logic.
-- [ ] Add the no-tool verifier prompt and provider-agnostic generation call.
-- [ ] Wire fail-closed verification before rendering and persistence.
-- [ ] Add aggregate review telemetry and its Drizzle migration.
+- [x] Add the bounded `SecurityVerificationOutput` Zod contract.
+- [x] Add trusted validation, severity-transition, and deduplication logic.
+- [x] Add the no-tool verifier prompt and provider-agnostic generation call.
+- [x] Wire fail-closed verification before rendering and persistence.
+- [x] Add aggregate review telemetry and its Drizzle migration.
 - [ ] Add historical false-positive and true-vulnerability golden fixtures.
-- [ ] Verify lint, tests, production build, and deployed replay acceptance.
+- [x] Verify lint, tests, and production build.
+- [ ] Verify deployed replay acceptance.

@@ -94,7 +94,7 @@ Features 33–34 remain subordinate to automatic review quality. Review accuracy
 context, inline usefulness, incremental behavior, and learnings must be
 dogfooded before conversation becomes a primary surface.
 
-### Review Trust Verification (planned)
+### Review Trust Verification (local implementation)
 
 - Finding-specific retrieval of authorization helpers, database constraints,
   migrations, tests, and explicit feature intent for severe candidates

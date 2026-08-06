@@ -16,6 +16,10 @@ import {
 import type { DiffFile } from "@/lib/review/diff";
 import type { RepositoryFileResult } from "@/lib/github/client";
 import type { RelatedCodeCandidate } from "@/lib/review/related-context";
+import type {
+  TargetedEvidenceCandidate,
+  TargetedEvidenceCategory,
+} from "@/lib/review/targeted-evidence";
 
 type FetchRepositoryFile = (
   installationId: number,
@@ -41,6 +45,18 @@ export type RelatedCodeContext = FullFileContext & { reason: string };
 
 export type RetrievedRelatedCodeContext = {
   files: RelatedCodeContext[];
+  metadata: FullFileContextMetadata;
+  requestCount: number;
+};
+
+export type TargetedEvidenceContext = FullFileContext & {
+  reason: string;
+  candidateIds: string[];
+  reasons: TargetedEvidenceCategory[];
+};
+
+export type RetrievedTargetedEvidenceContext = {
+  files: TargetedEvidenceContext[];
   metadata: FullFileContextMetadata;
   requestCount: number;
 };
@@ -247,6 +263,39 @@ export async function retrieveRelatedCodeContext(params: {
       ...file,
       reason: reasons.get(file.file)?.join(", ") ?? "related code",
     })),
+    metadata: result.metadata,
+    requestCount: result.requestCount,
+  };
+}
+
+export async function retrieveTargetedEvidenceContext(params: {
+  installationId: number;
+  repoFullName: string;
+  headSha: string;
+  candidates: TargetedEvidenceCandidate[];
+  suppliedFiles?: string[];
+  fetchRepositoryFile: FetchRepositoryFile;
+  totalByteBudget?: number;
+  totalTokenBudget?: number;
+  deadline?: number;
+}): Promise<RetrievedTargetedEvidenceContext> {
+  const supplied = new Set(params.suppliedFiles ?? []);
+  const candidates = params.candidates.filter((candidate) => !supplied.has(candidate.file));
+  const result = await retrieveContextCandidates({
+    ...params,
+    candidates: candidates.map(({ file }) => ({ file })),
+  });
+  const byFile = new Map(candidates.map((candidate) => [candidate.file, candidate]));
+  return {
+    files: result.files.map((file) => {
+      const candidate = byFile.get(file.file);
+      return {
+        ...file,
+        reason: candidate?.reasons.join(", ") ?? "targeted evidence",
+        candidateIds: candidate?.candidateIds ?? [],
+        reasons: candidate?.reasons ?? [],
+      };
+    }),
     metadata: result.metadata,
     requestCount: result.requestCount,
   };

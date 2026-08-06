@@ -102,6 +102,25 @@ export const adjudicationOutputSchema = z.object({
   decisions: z.array(findingAdjudicationSchema).max(50),
 });
 
+export const securityVerificationDecisionSchema = z.object({
+  candidateId: z.string().min(1).max(64),
+  decision: z.enum(["verified", "downgraded", "rejected", "manual_verification"]),
+  finalSeverity: severitySchema.nullable(),
+  evidenceComplete: z.boolean(),
+  attackPreconditions: z.string().max(2_000).nullable(),
+  trustBoundary: z.string().max(2_000).nullable(),
+  exploitPath: z.string().max(4_000).nullable(),
+  impact: z.string().max(2_000).nullable(),
+  defensesChecked: z.array(z.string().min(1).max(500)).max(12),
+  missingEvidence: z.array(z.string().min(1).max(500)).max(12),
+  reason: z.string().max(2_000),
+  duplicateOfCandidateId: z.string().max(64).nullable().default(null),
+});
+
+export const securityVerificationOutputSchema = z.object({
+  decisions: z.array(securityVerificationDecisionSchema).max(50),
+});
+
 /** Confirmed finding with evidence fields after Feature 24 adjudication. */
 export const confirmedFindingSchema = findingCandidateSchema.extend({
   requiresRuntimeVerification: z.literal(false),
@@ -128,6 +147,8 @@ export type ConfirmedFinding = z.infer<typeof confirmedFindingSchema>;
 export type CandidateReviewOutput = z.infer<typeof candidateReviewOutputSchema>;
 export type FindingAdjudication = z.infer<typeof findingAdjudicationSchema>;
 export type AdjudicationOutput = z.infer<typeof adjudicationOutputSchema>;
+export type SecurityVerificationDecision = z.infer<typeof securityVerificationDecisionSchema>;
+export type SecurityVerificationOutput = z.infer<typeof securityVerificationOutputSchema>;
 
 /** Feature 34 PR chat structured response. */
 export const chatReferenceSchema = z.object({

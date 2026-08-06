@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval:recorded": "vitest run tests/evaluation.test.ts",
+    "eval:live": "node scripts/evaluate-live.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.16",

@@ -34,7 +34,7 @@ function isPublicContract(content: string): boolean {
   ) || /^\s*export\s*\{[^}]+\}/m.test(content);
 }
 
-function extractLocalImports(content: string): string[] {
+export function extractLocalImports(content: string): string[] {
   const imports = new Set<string>();
   const lines = (content.includes("diff --git ")
     ? content
@@ -64,7 +64,7 @@ function extractLocalImports(content: string): string[] {
   return [...imports];
 }
 
-function resolveImport(sourcePath: string, specifier: string, repositoryPaths: Set<string>): string[] {
+export function resolveImport(sourcePath: string, specifier: string, repositoryPaths: Set<string>): string[] {
   const sourceDirectory = sourcePath.split("/").slice(0, -1).join("/");
   const segments = `${sourceDirectory}/${normalizeRepositoryPath(specifier)}`.split("/");
   const resolved: string[] = [];
@@ -89,7 +89,7 @@ function resolveImport(sourcePath: string, specifier: string, repositoryPaths: S
   return matches.length === 1 ? matches : [];
 }
 
-function colocatedTests(path: string, repositoryPaths: Set<string>): string[] {
+export function colocatedTests(path: string, repositoryPaths: Set<string>): string[] {
   if (isTestPath(path)) return [];
   const extension = SOURCE_EXTENSIONS.find((item) => path.endsWith(item));
   if (!extension) return [];

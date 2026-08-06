@@ -76,8 +76,14 @@ function createDependencies(
       isCommitOnPullRequest: vi.fn().mockResolvedValue(true),
       fetchInstructionsFile: vi.fn().mockResolvedValue(null),
       fetchRepositoryIssue: vi.fn().mockResolvedValue({ status: "missing" }),
-      fetchRepositoryFile: vi.fn().mockResolvedValue({ status: "missing" }),
-      fetchRepositoryTree: vi.fn().mockResolvedValue({ status: "fetched", paths: [] }),
+      fetchRepositoryFile: vi.fn().mockImplementation(async (_installationId, _repo, path) => ({
+        status: "fetched" as const,
+        content: `export const evidence = true; // ${path}`,
+      })),
+      fetchRepositoryTree: vi.fn().mockResolvedValue({
+        status: "fetched",
+        paths: ["context/architecture.md", "lib/security/defense.ts"],
+      }),
       upsertComment: vi.fn().mockResolvedValue(9001),
       createPullRequestReview: vi.fn().mockResolvedValue({ reviewId: 1 }),
       listPullRequestReviewComments: vi.fn().mockResolvedValue([]),
@@ -95,6 +101,32 @@ function createDependencies(
       output: { summary: "No confirmed findings.", verdict: "approve", decisions: [] },
       usage: { inputTokens: 6, outputTokens: 2 },
       durationMs: 4,
+    }),
+    verifySecurityFindings: vi.fn().mockImplementation(async (prompt: { user: string }) => {
+      const ids = [...prompt.user.matchAll(/"candidateId":"(candidate-\d+)"/g)]
+        .map((match) => match[1])
+        .filter((id, index, all): id is string => id !== undefined && all.indexOf(id) === index);
+      const critical = prompt.user.includes('"severity":"critical"');
+      return {
+        output: {
+          decisions: ids.map((candidateId) => ({
+            candidateId,
+            decision: "verified" as const,
+            finalSeverity: critical ? "critical" as const : "high" as const,
+            evidenceComplete: true,
+            attackPreconditions: "An attacker reaches the changed path.",
+            trustBoundary: "The request crosses the application authorization boundary.",
+            exploitPath: "The changed branch reaches the protected operation.",
+            impact: "The protected operation can be misused.",
+            defensesChecked: ["authorization"],
+            missingEvidence: [],
+            reason: "The supplied evidence proves the path.",
+            duplicateOfCandidateId: null,
+          })),
+        },
+        usage: { inputTokens: 2, outputTokens: 2 },
+        durationMs: 1,
+      };
     }),
   };
 }
@@ -177,6 +209,26 @@ function configureConfirmedInlineFinding(dependencies: ReviewWorkerDependencies)
         candidateId: "candidate-1",
         decision: "confirmed",
         reason: "ok",
+      }],
+    },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    durationMs: 1,
+  });
+  dependencies.verifySecurityFindings = vi.fn().mockResolvedValue({
+    output: {
+      decisions: [{
+        candidateId: "candidate-1",
+        decision: "verified",
+        finalSeverity: "high",
+        evidenceComplete: true,
+        attackPreconditions: "An attacker reaches the changed path.",
+        trustBoundary: "The request crosses the authorization boundary.",
+        exploitPath: "The changed branch reaches the protected operation.",
+        impact: "The operation can be misused.",
+        defensesChecked: ["authorization"],
+        missingEvidence: [],
+        reason: "The supplied evidence proves the path.",
+        duplicateOfCandidateId: null,
       }],
     },
     usage: { inputTokens: 1, outputTokens: 1 },
@@ -1046,8 +1098,8 @@ describe("review worker route", () => {
         rejectedFindings: 0,
         manualCheckCandidates: 0,
         adjudicationModel: "openai/test",
-        inputTokens: 18,
-        outputTokens: 7,
+        inputTokens: 20,
+        outputTokens: 9,
       }),
     );
     expect(dependencies.queries.upsertConfirmedFindings).toHaveBeenCalledWith([
@@ -1142,6 +1194,26 @@ describe("review worker route", () => {
           candidateId: "candidate-1",
           decision: "confirmed",
           reason: "Concrete path.",
+        }],
+      },
+      usage: { inputTokens: 2, outputTokens: 1 },
+      durationMs: 1,
+    });
+    dependencies.verifySecurityFindings = vi.fn().mockResolvedValue({
+      output: {
+        decisions: [{
+          candidateId: "candidate-1",
+          decision: "verified",
+          finalSeverity: "high",
+          evidenceComplete: true,
+          attackPreconditions: "An attacker reaches the changed path.",
+          trustBoundary: "The request crosses the authorization boundary.",
+          exploitPath: "The changed branch reaches the protected operation.",
+          impact: "The operation can be misused.",
+          defensesChecked: ["authorization"],
+          missingEvidence: [],
+          reason: "The supplied evidence proves the path.",
+          duplicateOfCandidateId: null,
         }],
       },
       usage: { inputTokens: 2, outputTokens: 1 },

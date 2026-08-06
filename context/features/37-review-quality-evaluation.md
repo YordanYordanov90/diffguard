@@ -110,11 +110,12 @@ content, or replacing human acceptance review for high-impact prompt changes.
 
 ## Implementation checklist
 
-- [ ] Create the sanitized evaluation manifest and validation schema.
-- [ ] Label the 29 canonical historical suggestions and add safe fixtures.
-- [ ] Add true-positive severe authorization and tenant-isolation fixtures.
-- [ ] Add stage-level and end-to-end evaluation runners.
-- [ ] Add deterministic metric calculation and release thresholds.
-- [ ] Add a CI-safe recorded-output mode and an explicit live-model command.
-- [ ] Document the human feedback-promotion and release-review process.
-- [ ] Run the baseline, record results, and approve the first calibrated gate.
+- [x] Create the sanitized evaluation manifest and validation schema.
+- [x] Label the 29 canonical historical suggestions and add safe fixtures.
+- [x] Add true-positive severe authorization and tenant-isolation fixtures.
+- [x] Add stage-level and end-to-end evaluation runners.
+- [x] Add deterministic metric calculation and release thresholds.
+- [x] Add a CI-safe recorded-output mode and an explicit live-model command.
+- [x] Document the human feedback-promotion and release-review process.
+- [x] Run the baseline and record deterministic results.
+- [ ] Approve the first calibrated gate through human review.

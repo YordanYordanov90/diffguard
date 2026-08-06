@@ -182,6 +182,21 @@ export const reviews = pgTable(
     manualCheckCandidates: integer("manual_check_candidates").notNull().default(0),
     adjudicationModel: text("adjudication_model"),
     adjudicationDurationMs: integer("adjudication_duration_ms"),
+    targetedEvidenceCandidates: integer("targeted_evidence_candidates").notNull().default(0),
+    targetedEvidenceComplete: integer("targeted_evidence_complete").notNull().default(0),
+    targetedEvidenceIncomplete: integer("targeted_evidence_incomplete").notNull().default(0),
+    targetedEvidenceFetched: integer("targeted_evidence_fetched").notNull().default(0),
+    targetedEvidenceRequests: integer("targeted_evidence_requests").notNull().default(0),
+    targetedEvidenceDurationMs: integer("targeted_evidence_duration_ms"),
+    securityVerificationCandidates: integer("security_verification_candidates").notNull().default(0),
+    securityVerificationVerified: integer("security_verification_verified").notNull().default(0),
+    securityVerificationDowngraded: integer("security_verification_downgraded").notNull().default(0),
+    securityVerificationRejected: integer("security_verification_rejected").notNull().default(0),
+    securityVerificationManual: integer("security_verification_manual").notNull().default(0),
+    securityVerificationModel: text("security_verification_model"),
+    securityVerificationInputTokens: integer("security_verification_input_tokens"),
+    securityVerificationOutputTokens: integer("security_verification_output_tokens"),
+    securityVerificationDurationMs: integer("security_verification_duration_ms"),
     linkedIssueAssessments: jsonb("linked_issue_assessments")
       .$type<StoredIssueAssessment[]>()
       .notNull()

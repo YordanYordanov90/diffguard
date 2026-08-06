@@ -117,9 +117,9 @@ decisions, rendering, persistence of source, or automatic fixes.
 
 ## Implementation checklist
 
-- [ ] Define the pure targeted-evidence planner and bounded runtime types.
-- [ ] Add deterministic direct-definition, schema, migration, and test routing.
-- [ ] Integrate exact-head retrieval through the existing bounded retriever.
-- [ ] Add completeness calculation and aggregate-only telemetry.
+- [x] Define the pure targeted-evidence planner and bounded runtime types.
+- [x] Add deterministic direct-definition, schema, migration, and test routing.
+- [x] Integrate exact-head retrieval through the existing bounded retriever.
+- [x] Add completeness calculation and aggregate-only telemetry.
 - [ ] Add required regression and adversarial fixtures.
 - [ ] Verify lint, tests, production build, and one deployed dogfood review.

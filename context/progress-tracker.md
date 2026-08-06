@@ -10,9 +10,9 @@ Update this file after every meaningful implementation change.
   are implemented with acceptance verification still pending, Feature 23 is
   underway, and Features 25–26 and 28–34 (findings through PR-scoped AI chat)
   are implemented — the review-quality roadmap is complete pending dogfood.
-- Review-trust verification is specified as planned Features 35–37: targeted
-  security evidence, a fail-closed high/critical gate, and offline quality
-  evaluation. Implementation has not started.
+- Review-trust verification is implemented locally through Feature 37;
+  deployment, historical replay acceptance, and human calibration approval
+  remain pending.
 
 ## Current Goal
 
@@ -371,6 +371,22 @@ Update this file after every meaningful implementation change.
   high/critical verification and deduplication gate, and a sanitized offline
   precision/regression program based on the 29 canonical dogfood suggestions.
   No application code changed.
+- Feature 35 (Targeted Security Evidence Retrieval) — implementation completed
+  locally 2026-08-02: pure bounded planner, exact-head retrieval, completeness
+  assessment, and aggregate-only review telemetry. Migration deployment and
+  deployed dogfood remain pending.
+- Feature 36 (High-Severity Verification Gate) — implementation completed
+  locally 2026-08-02: bounded verifier contract and prompt, shared-deadline
+  no-tool generation, fail-closed severity transitions, duplicate-root merge,
+  publication allowlisting, and aggregate verification telemetry with Drizzle
+  migration. Deployed replay of the historical false-positive and true-
+  vulnerability fixtures remains pending.
+- Feature 37 (Review Quality Evaluation & Calibration) — implementation
+  completed locally 2026-08-03: versioned 29-fixture sanitized manifest,
+  recorded stage outputs, deterministic precision/severity/duplicate/cost
+  metrics, release gates, stage runner interface, CI-safe evaluation command,
+  and explicit live-evaluation guard. Human review approval and deployed
+  replay remain pending.
 
 ## In Progress
 
@@ -396,9 +412,8 @@ Update this file after every meaningful implementation change.
      subscription, then dogfood pause/resume, manual review, and one PR chat
      answer on a scratch install before beta re-approval.
 3. Implement the review-trust roadmap in order:
-   - Feature 35: targeted security evidence retrieval;
-   - Feature 36: high-severity verification, downgrade, and deduplication gate;
-   - Feature 37: sanitized evaluation corpus, metrics, and release gates.
+   - Features 35–37: deploy migrations, dogfood the trust gates, and obtain
+     human approval for the calibrated evaluation baseline.
 
 ## Open Questions
 

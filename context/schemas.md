@@ -74,6 +74,21 @@ rejected_findings        integer NOT NULL DEFAULT 0
 manual_check_candidates  integer NOT NULL DEFAULT 0
 adjudication_model       text NULL
 adjudication_duration_ms integer NULL
+targeted_evidence_candidates integer NOT NULL DEFAULT 0
+targeted_evidence_complete integer NOT NULL DEFAULT 0
+targeted_evidence_incomplete integer NOT NULL DEFAULT 0
+targeted_evidence_fetched integer NOT NULL DEFAULT 0
+targeted_evidence_requests integer NOT NULL DEFAULT 0
+targeted_evidence_duration_ms integer NULL
+security_verification_candidates integer NOT NULL DEFAULT 0
+security_verification_verified integer NOT NULL DEFAULT 0
+security_verification_downgraded integer NOT NULL DEFAULT 0
+security_verification_rejected integer NOT NULL DEFAULT 0
+security_verification_manual integer NOT NULL DEFAULT 0
+security_verification_model text NULL
+security_verification_input_tokens integer NULL
+security_verification_output_tokens integer NULL
+security_verification_duration_ms integer NULL
 linked_issue_assessments jsonb NOT NULL DEFAULT '[]'  // Feature 29; never issue body
 skipped_files    text[] NOT NULL DEFAULT '{}'  // over-budget disclosure
 model            text NULL
@@ -573,6 +588,7 @@ SecurityVerification = {
   defensesChecked:     string[]
   missingEvidence:     string[]
   reason:              string
+  duplicateOfCandidateId: string | null // trusted allowlisted id only
 }
 
 SecurityVerificationOutput = {
@@ -589,16 +605,49 @@ that is not higher than the original candidate. `downgraded` permits only
 `finalSeverity: null`. Invalid, missing, duplicate, or arbitrary ids verify
 nothing.
 
-Feature 36 plans aggregate-only columns on `reviews` for verification
-candidate, verified, downgraded, rejected, and manual counts plus model and
-duration. Verification input/output tokens are either included in the existing
-total review usage or stored as separate aggregate counters; that choice and
-the exact column names must be resolved here before the implementing Drizzle
-migration. Verifier reasoning, evidence paths, source, diffs, and prompts are
-never persisted.
+Feature 35 persists only aggregate targeted-evidence telemetry on `reviews`:
+`targeted_evidence_candidates`, `targeted_evidence_complete`,
+`targeted_evidence_incomplete`, `targeted_evidence_fetched`,
+`targeted_evidence_requests`, and `targeted_evidence_duration_ms`. Feature 36
+adds aggregate `security_verification_*` counters, model, token, and duration
+columns. Evidence plans, completeness details, paths, source, diffs, prompts,
+and verifier reasoning remain runtime-only and non-persistent.
 
 Feature 37's evaluation labels and reports are offline test artifacts, not
 database or public API contracts.
+
+### Review-quality evaluation artifacts (Feature 37)
+
+```ts
+EvaluationLabel =
+  | "actionable_defect" | "optional_hardening" | "intentional_behavior"
+  | "false_positive" | "policy_question" | "duplicate"
+  | "severity_overstated"
+
+EvaluationManifest = {
+  version: string
+  fixtures: SanitizedEvaluationFixture[] // canonical v1 contains 29
+}
+
+EvaluationReport = {
+  version: string
+  fixtureCount: number
+  actionablePrecision: RateMetric
+  highCriticalPrecision: RateMetric
+  falsePositiveRate: RateMetric
+  optionalHardeningRate: RateMetric
+  severityOverstatementRate: RateMetric
+  duplicateRootCauseRate: RateMetric
+  incompleteEvidencePublicationAttempts: number
+  malformedPublicationAttempts: number
+  stages: StageAggregate[]
+}
+```
+
+Manifest source is synthetic or owner-controlled public fixture data only.
+Recorded results contain structured outputs, fixture ids, model ids, tokens,
+durations, and aggregate decisions; they never contain source, diffs, prompts,
+issue bodies, or comment text.
 
 The contracts below document implemented Features 29–34 and remain the shape
 source of truth for their current boundaries. Update matching Zod/Drizzle code
