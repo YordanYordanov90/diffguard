@@ -43,6 +43,8 @@ describe("review quality evaluation", () => {
     const gates = evaluateReleaseGates(report);
 
     expect(report.fixtureCount).toBe(29);
+    expect(report.expectedSevereFixtureCount).toBe(4);
+    expect(report.expectedSevereOutcomeFailures).toEqual([]);
     expect(report.publishedFindingCount).toBe(13);
     expect(report.actionablePrecision).toEqual({ numerator: 12, denominator: 13, rate: 12 / 13 });
     expect(report.highCriticalPrecision.rate).toBe(1);
@@ -52,6 +54,30 @@ describe("review quality evaluation", () => {
     expect(report.regressionFailures).toEqual([]);
     expect(gates.passed).toBe(true);
     expect(gates.gates.every((gate) => gate.status !== "failed")).toBe(true);
+  });
+
+  it("fails when expected severe fixtures are all suppressed", () => {
+    const severeFixtureIds = [
+      "retry-idempotency-replay",
+      "signature-ordering-regression",
+      "tenant-filter-missing",
+      "prompt-injection-boundary",
+    ];
+    const suppressed = {
+      ...recordedResults,
+      results: recordedResults.results.map((result) =>
+        severeFixtureIds.includes(result.fixtureId)
+          ? { ...result, finalFindings: [], verification: "manual_verification" as const }
+          : result,
+      ),
+    };
+    const gates = evaluateReleaseGates(computeEvaluationReport(manifest, suppressed));
+
+    expect(gates.passed).toBe(false);
+    expect(gates.gates.find((gate) => gate.name === "expected_severe_outcomes")?.status)
+      .toBe("failed");
+    expect(gates.gates.find((gate) => gate.name === "high_critical_precision")?.status)
+      .toBe("failed");
   });
 
   it("fails the release gate when an incomplete severe finding is published", () => {

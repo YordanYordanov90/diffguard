@@ -315,6 +315,24 @@ describe("conversation worker", () => {
     expect(dependencies.reviewPublisher.publishJSON).not.toHaveBeenCalled();
   });
 
+  it("republishes a manual review after a prior daily-cap skip is requeued", async () => {
+    const dependencies = createDependencies({ commentBody: "@diffguard review" });
+    dependencies.queries.createQueuedReview.mockResolvedValue({
+      created: false,
+      review: { id: "review-1", status: "queued" },
+    });
+
+    const response = await handleConversationWorker(
+      signedRequest(baseJob),
+      dependencies,
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { status: "completed", enqueue: "queued" },
+    });
+    expect(dependencies.reviewPublisher.publishJSON).toHaveBeenCalled();
+  });
+
   it("skips deleted comments and inaccessible PRs", async () => {
     const deleted = createDependencies({ commentStatus: "missing" });
     await handleConversationWorker(signedRequest(baseJob), deleted);

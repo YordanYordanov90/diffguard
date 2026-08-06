@@ -68,6 +68,9 @@ produce fewer findings at any cost. The objective is evidence-backed precision.
 - Known false high/critical fixtures: 100% rejected or correctly downgraded.
 - High/critical precision: at least 90% once the set contains enough positive
   and negative severe cases to make the metric meaningful.
+- Expected positive high/critical fixtures must retain their calibrated
+  published outcome; suppressing the entire positive set is a failed gate,
+  not a non-meaningful metric.
 - Published high/critical findings with incomplete evidence: zero.
 - Duplicate root causes in final output: below 5%, with a target of zero.
 - PR #38, #61, #63, and #64 regression expectations remain stable.

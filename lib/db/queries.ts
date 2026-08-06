@@ -271,6 +271,22 @@ async function createQueuedReviewWithinDailyCap(
         AND review.repository_id = ${input.repositoryId}
         AND review.pr_number = ${input.prNumber}
         AND review.head_sha = ${input.headSha}
+        AND (
+          review.status <> 'skipped'
+          OR review.skip_reason IS NULL
+          OR review.skip_reason <> 'daily_cap'
+        )
+      LIMIT 1
+    ),
+    daily_cap_existing AS (
+      SELECT review.id
+      FROM reviews AS review, locked
+      WHERE review.installation_id = ${input.installationId}
+        AND review.repository_id = ${input.repositoryId}
+        AND review.pr_number = ${input.prNumber}
+        AND review.head_sha = ${input.headSha}
+        AND review.status = 'skipped'
+        AND review.skip_reason = 'daily_cap'
       LIMIT 1
     ),
     capacity AS (
@@ -288,6 +304,20 @@ async function createQueuedReviewWithinDailyCap(
         AND repository.installation_id = ${input.installationId}
         AND capacity.available
         AND NOT EXISTS (SELECT 1 FROM existing)
+        AND NOT EXISTS (SELECT 1 FROM daily_cap_existing)
+    ),
+    requeued AS (
+      UPDATE reviews AS review
+      SET
+        status = 'queued',
+        skip_reason = NULL,
+        error = NULL,
+        created_at = now(),
+        updated_at = now()
+      FROM capacity
+      WHERE review.id IN (SELECT id FROM daily_cap_existing)
+        AND capacity.available
+      RETURNING review.id
     ),
     inserted AS (
       INSERT INTO reviews (
@@ -326,14 +356,22 @@ async function createQueuedReviewWithinDailyCap(
         AND repository.installation_id = ${input.installationId}
         AND NOT capacity.available
         AND NOT EXISTS (SELECT 1 FROM existing)
+        AND NOT EXISTS (SELECT 1 FROM daily_cap_existing)
       ON CONFLICT (repository_id, pr_number, head_sha) DO NOTHING
       RETURNING id
     )
+    SELECT requeued.id, true AS created, NULL::text AS reason
+    FROM requeued
+    UNION ALL
     SELECT inserted.id, true AS created, NULL::text AS reason
     FROM inserted
     UNION ALL
     SELECT existing.id, false AS created, NULL::text AS reason
     FROM existing
+    UNION ALL
+    SELECT daily_cap_existing.id, false AS created, 'daily_cap'::text AS reason
+    FROM daily_cap_existing, capacity
+    WHERE NOT capacity.available
     UNION ALL
     SELECT capped.id, true AS created, 'daily_cap'::text AS reason
     FROM capped

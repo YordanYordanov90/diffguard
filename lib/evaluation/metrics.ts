@@ -21,6 +21,8 @@ export type EvaluationStageMetric = {
 export type EvaluationReport = {
   version: string;
   fixtureCount: number;
+  expectedSevereFixtureCount: number;
+  expectedSevereOutcomeFailures: string[];
   publishedFindingCount: number;
   actionablePrecision: RateMetric;
   highCriticalPrecision: RateMetric;
@@ -158,6 +160,8 @@ export function computeEvaluationReport(
   let incompleteEvidencePublicationAttempts = 0;
   let malformedPublicationAttempts = 0;
   let knownFalseSeverePublicationAttempts = 0;
+  let expectedSevereFixtureCount = 0;
+  const expectedSevereOutcomeFailures: string[] = [];
   const regressionFailures: string[] = [];
   const reportResults: EvaluationReport["results"] = [];
 
@@ -192,6 +196,10 @@ export function computeEvaluationReport(
       severityOverstatedCount += 1;
       if (result.finalFindings.some((finding) => SEVERE.has(finding.severity))) severityOverstated += 1;
     }
+    if (fixture.expected.finalSeverity !== null && SEVERE.has(fixture.expected.finalSeverity)) {
+      expectedSevereFixtureCount += 1;
+      if (regressionFailure(fixture, result)) expectedSevereOutcomeFailures.push(fixture.id);
+    }
     if (result.verification === "downgraded") increment(verificationDowngradeReasons, result.verificationReason);
     if (result.adjudication === "rejected" || result.adjudication === "manual_verification") {
       increment(candidateRejectionReasons, result.adjudicationReason);
@@ -224,6 +232,8 @@ export function computeEvaluationReport(
   return {
     version: manifest.version,
     fixtureCount: manifest.fixtures.length,
+    expectedSevereFixtureCount,
+    expectedSevereOutcomeFailures,
     publishedFindingCount,
     actionablePrecision: rate(usefulPublished, publishedFindingCount),
     highCriticalPrecision: rate(correctSeverePublished, severePublished),
@@ -250,10 +260,14 @@ export function evaluateReleaseGates(
 ): ReleaseGateReport {
   const minimumSevereFixtures = options.minimumSevereFixtures ?? 4;
   const minimumPrecision = options.minimumHighCriticalPrecision ?? 0.9;
-  const severeFixtures = report.results.filter((result) =>
-    result.finalSeverities.some((severity) => SEVERE.has(severity)),
-  ).length;
   const gates: ReleaseGate[] = [
+    {
+      name: "expected_severe_outcomes",
+      status: report.expectedSevereOutcomeFailures.length === 0 ? "passed" : "failed",
+      value: report.expectedSevereOutcomeFailures.length,
+      threshold: 0,
+      detail: "All expected high/critical fixtures must retain their calibrated outcome.",
+    },
     {
       name: "known_false_severe_rejected_or_downgraded",
       status: report.knownFalseSeverePublicationAttempts === 0
@@ -264,7 +278,7 @@ export function evaluateReleaseGates(
     },
     {
       name: "high_critical_precision",
-      status: severeFixtures < minimumSevereFixtures
+      status: report.expectedSevereFixtureCount < minimumSevereFixtures
         ? "not_meaningful"
         : report.highCriticalPrecision.rate !== null && report.highCriticalPrecision.rate >= minimumPrecision
           ? "passed" : "failed",

@@ -13,6 +13,10 @@ Update this file after every meaningful implementation change.
 - Review-trust verification is implemented locally through Feature 37;
   deployment, historical replay acceptance, and human calibration approval
   remain pending.
+- Codex review follow-up for PR #65 is implemented on `dev`: targeted intent
+  evidence is conditional, retrieval reserves targeted capacity, severe
+  evaluation outcomes are required, and daily-cap manual reviews requeue
+  after the UTC reset.
 
 ## Current Goal
 

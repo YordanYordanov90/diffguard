@@ -7,6 +7,7 @@ import {
   extractLocalImports,
   resolveImport,
 } from "./related-context";
+import type { FindingCandidate } from "./schema";
 
 export type TargetedEvidenceCategory =
   | "candidate_source"
@@ -21,6 +22,7 @@ export type TargetedEvidenceFinding = {
   file: string;
   severity: "high" | "critical";
   category: "security" | "bug" | "quality" | "performance";
+  requiresFeatureIntent?: boolean;
 };
 
 export type TargetedEvidenceCandidate = {
@@ -52,6 +54,19 @@ const SECURITY_FILE_PATTERN = /(?:auth|access|permission|authorize|security|scop
 const DATA_PATH_PATTERN = /(?:db|schema|migration|drizzle|query|queries|repository|installation|transaction|quota|constraint)/i;
 const DATA_SOURCE_PATTERN = /(?:installationId|repositoryId|tenant|unique|transaction|quota|constraint|onConflict|advisory)/i;
 const LOCAL_REFERENCE_PATTERN = /\b(?:from\s+|import\s*)["'](?:@\/|\.{1,2}\/)|\bimport\s*\(["'](?:@\/|\.{1,2}\/)/;
+const POLICY_INTENT_PATTERN = /\b(?:policy|intent|intended|requirement|product behavior|feature behavior|read[- ]only|write access|pr author|collaborator|manual review|control command)\b/i;
+
+export function candidateNeedsFeatureIntent(
+  candidate: Pick<FindingCandidate, "title" | "detail" | "observedBehavior" | "causalPath" | "violatedInvariant">,
+): boolean {
+  return POLICY_INTENT_PATTERN.test([
+    candidate.title,
+    candidate.detail,
+    candidate.observedBehavior,
+    candidate.causalPath,
+    candidate.violatedInvariant,
+  ].join("\n"));
+}
 
 function repositoryPathSet(repositoryPaths: string[]): Set<string> {
   return new Set(
@@ -165,7 +180,7 @@ function requiredCategories(
   }
   if (candidateNeedsSecurityDefense(finding, source ?? "")) {
     required.push("security_defense");
-    required.push("feature_intent");
+    if (finding.requiresFeatureIntent) required.push("feature_intent");
   }
   if (candidateNeedsDataContract(finding, source ?? "")) {
     required.push("data_contract");
@@ -233,7 +248,7 @@ export function planTargetedSecurityEvidence(params: {
     for (const test of colocatedTests(file, paths)) {
       addCandidate(candidates, test, "focused_test", finding.candidateId);
     }
-    if (paths.has("context/architecture.md")) {
+    if (finding.requiresFeatureIntent && paths.has("context/architecture.md")) {
       addCandidate(candidates, "context/architecture.md", "feature_intent", finding.candidateId);
     }
   }

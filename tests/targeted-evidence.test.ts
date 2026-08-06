@@ -16,6 +16,7 @@ describe("targeted security evidence planning", () => {
         file: "src/auth/controller.ts",
         severity: "high",
         category: "security",
+        requiresFeatureIntent: true,
       }],
       changedFiles: [changedFile(
         "src/auth/controller.ts",
@@ -103,6 +104,27 @@ describe("targeted security evidence planning", () => {
     });
   });
 
+  it("does not require project intent for ordinary security claims", () => {
+    const plan = planTargetedSecurityEvidence({
+      findings: [{
+        candidateId: "candidate-1",
+        file: "src/auth/check.ts",
+        severity: "high",
+        category: "security",
+        requiresFeatureIntent: false,
+      }],
+      changedFiles: [changedFile("src/auth/check.ts", "export function check() { return true; }")],
+      fullFileContext: [{ file: "src/auth/check.ts", content: "export function check() { return true; }" }],
+      relatedCodeContext: [],
+      repositoryPaths: ["src/auth/check.ts"],
+      maxFiles: 6,
+      requestBudget: 6,
+    });
+
+    expect(plan.requirements[0]?.requiredCategories).not.toContain("feature_intent");
+    expect(plan.candidates.map((candidate) => candidate.file)).not.toContain("context/architecture.md");
+  });
+
   it("keeps unresolved aliases and dynamic calls incomplete", () => {
     const plan = planTargetedSecurityEvidence({
       findings: [{
@@ -166,7 +188,6 @@ describe("targeted security evidence planning", () => {
     });
 
     const files = plan.candidates.map((candidate) => candidate.file);
-    expect(files).toContain("context/architecture.md");
     if (_name === "PR63-worker-authorization") {
       expect(files).toContain("lib/github/client.ts");
     } else {

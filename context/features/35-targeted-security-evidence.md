@@ -52,8 +52,10 @@ decision.
 - Mark the bundle incomplete when a referenced defense, schema contract, or
   direct callee required by the causal path cannot be resolved within bounds.
   Missing context is never treated as evidence that the finding is valid.
-- Share the review worker's total request, byte, token, and time budgets. A
-  budget miss produces an incomplete bundle rather than an unbounded fetch.
+- Share the review worker's byte, token, and time budgets. The total request
+  allowance reserves capacity for this targeted stage after general context
+  retrieval. A budget miss produces an incomplete bundle rather than an
+  unbounded fetch.
 
 ## Evidence completeness policy
 

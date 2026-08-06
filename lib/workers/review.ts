@@ -6,6 +6,7 @@ import {
   FULL_FILE_CONTEXT_TIMEOUT_MS,
   FULL_FILE_CONTEXT_TOTAL_BYTE_LIMIT,
   FULL_FILE_CONTEXT_TOTAL_TOKEN_LIMIT,
+  GENERAL_REVIEW_CONTEXT_MAX_FETCHES,
   LLM_TIMEOUT_MS,
   REVIEW_CONTEXT_MAX_FETCHES,
   REVIEW_PROMPT_TOKEN_BUDGET,
@@ -131,6 +132,7 @@ import {
 } from "./context";
 import {
   assessTargetedSecurityEvidence,
+  candidateNeedsFeatureIntent,
   planTargetedSecurityEvidence,
 } from "@/lib/review/targeted-evidence";
 
@@ -855,7 +857,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
       changedFiles: processedDiff.files,
       fullFileContext: fullFileContext.files,
       repositoryPaths: repositoryTree.status === "fetched" ? repositoryTree.paths : [],
-      requestBudget: Math.max(0, REVIEW_CONTEXT_MAX_FETCHES - fullFileContext.requestCount),
+      requestBudget: Math.max(0, GENERAL_REVIEW_CONTEXT_MAX_FETCHES - fullFileContext.requestCount),
     });
     const relatedCodeContext = await retrieveRelatedCodeContext({
       installationId: job.installationId,
@@ -977,6 +979,7 @@ async function runReview(job: ReviewJob, dependencies: ReviewWorkerDependencies)
         file: candidate.file,
         severity: candidate.severity,
         category: candidate.category,
+        requiresFeatureIntent: candidateNeedsFeatureIntent(candidate),
       }];
     });
     targetedEvidenceCandidates = targetedFindings.length;
